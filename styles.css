@@ -1,0 +1,127 @@
+.vaultpilot-view {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	height: 100%;
+	padding: 14px;
+	color: var(--text-normal);
+	background: var(--background-primary);
+}
+
+.vaultpilot-header {
+	border-bottom: 1px solid var(--background-modifier-border);
+	padding-bottom: 10px;
+}
+
+.vaultpilot-header h2 {
+	margin: 0 0 4px;
+	font-size: 18px;
+	line-height: 1.25;
+}
+
+.vaultpilot-header p {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.vaultpilot-messages {
+	display: flex;
+	flex: 1 1 auto;
+	flex-direction: column;
+	gap: 8px;
+	min-height: 160px;
+	overflow-y: auto;
+	padding-right: 2px;
+	scroll-behavior: smooth;
+}
+
+.vaultpilot-message {
+	white-space: pre-wrap;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 9px 10px;
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.vaultpilot-message-markdown {
+	white-space: normal;
+}
+
+.vaultpilot-message-markdown > :first-child {
+	margin-top: 0;
+}
+
+.vaultpilot-message-markdown > :last-child {
+	margin-bottom: 0;
+}
+
+.vaultpilot-message-markdown pre,
+.vaultpilot-message-markdown code {
+	white-space: pre-wrap;
+}
+
+.vaultpilot-message-assistant {
+	background: var(--background-secondary);
+}
+
+.vaultpilot-message-user {
+	margin-left: 20px;
+	background: var(--interactive-normal);
+}
+
+.vaultpilot-footer {
+	display: flex;
+}
+
+.vaultpilot-footer button {
+	width: 100%;
+	min-height: 32px;
+	border-radius: 6px;
+}
+
+.vaultpilot-input {
+	width: 100%;
+	min-height: 74px;
+	max-height: 180px;
+	resize: vertical;
+	border-radius: 8px;
+	border: 1px solid var(--background-modifier-border);
+	padding: 8px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.vaultpilot-footer {
+	flex: 0 0 auto;
+}
+
+.vaultpilot-note-links {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 5px;
+	margin-top: 10px;
+	padding-top: 8px;
+	border-top: 1px solid var(--background-modifier-border);
+}
+
+.vaultpilot-note-links-label {
+	color: var(--text-muted);
+	font-size: 12px;
+}
+
+.vaultpilot-note-links button {
+	max-width: 100%;
+	min-height: 26px;
+	overflow: hidden;
+	border-radius: 999px;
+	padding: 2px 9px;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	font-size: 12px;
+}

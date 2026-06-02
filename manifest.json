@@ -1,0 +1,10 @@
+{
+	"id": "vaultpilot",
+	"name": "VaultPilot",
+	"version": "1.0.0",
+	"minAppVersion": "1.7.2",
+	"description": "An Obsidian knowledge agent for vault Q&A, source inspection, and link suggestions.",
+	"author": "VaultPilot contributors",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
