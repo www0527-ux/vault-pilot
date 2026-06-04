@@ -4,11 +4,13 @@ import {
 	callRemoteModel,
 	callRemoteModelStream,
 	refreshAvailableModels,
+	rewriteRetrievalQuery,
 } from './llm/chat';
 import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
+import { buildRuleBasedRewrite } from './rag/query-rewrite';
 import { suggestLinks } from './rag/search';
-import { AgentAnswer, PreparedQuestion, SearchResult } from './rag/types';
+import { AgentAnswer, AgentStreamEvent, PreparedQuestion, QueryRewrite, ResponseTrace, SearchResult } from './rag/types';
 import {
 	DEFAULT_SETTINGS,
 	PROVIDER_PRESETS,
@@ -16,6 +18,9 @@ import {
 	VaultPilotSettings,
 } from './settings';
 import { VaultPilotView, VIEW_TYPE_VAULTPILOT } from './ui/view';
+
+const RETRIEVAL_MODE_LABEL = 'Hybrid retrieval - BM25 0.3 / Embedding 0.7';
+const MIN_USABLE_TOP_SCORE = 0.25;
 
 export default class VaultPilotPlugin extends Plugin {
 	settings!: VaultPilotSettings;
@@ -25,10 +30,7 @@ export default class VaultPilotPlugin extends Plugin {
 		await this.loadSettings();
 		this.indexManager = new IndexManager(this.app.vault, () => this.getEmbeddingSettings());
 
-		this.registerView(
-			VIEW_TYPE_VAULTPILOT,
-			(leaf) => new VaultPilotView(leaf, this),
-		);
+		this.registerView(VIEW_TYPE_VAULTPILOT, (leaf) => new VaultPilotView(leaf, this));
 
 		this.addRibbonIcon('bot', 'Open VaultPilot', async () => {
 			await this.activateView();
@@ -109,46 +111,30 @@ export default class VaultPilotPlugin extends Plugin {
 		return this.indexManager.search(query, limit);
 	}
 
+	async searchNotesMany(queries: string[], limit = this.settings.maxResults): Promise<SearchResult[]> {
+		return this.indexManager.searchMany(queries, limit);
+	}
+
 	async answerQuestion(question: string): Promise<AgentAnswer> {
-		const { activeFile, activeContent, results } = await this.prepareQuestion(question);
+		const { activeFile, activeContent, results, trace } = await this.prepareQuestion(question);
 
 		if (this.settings.provider !== 'local' && !this.settings.apiKey.trim()) {
-			return {
-				answer: [
-					'当前选择了远程模型模式，但还没有配置 API key。',
-					'请在 VaultPilot 设置里填入 API key，或者切回 Local search。',
-					buildLocalAnswer(question, results, activeFile),
-				].join('\n\n'),
-				results,
-				mode: 'local',
-				warning: 'Missing API key',
-			};
+			return this.missingApiKeyAnswer(question, activeFile, results, trace);
 		}
 
 		if (this.settings.provider !== 'local') {
 			try {
-				const answer = await callRemoteModel(
+				const remoteAnswer = await callRemoteModel(
 					this.getChatClientOptions(),
 					question,
 					results,
 					activeFile,
 					activeContent,
 				);
-				return { answer, results, mode: 'remote' };
+				const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
+				return { answer: cleaned.answer, results, mode: 'remote', trace: addModelProcess(trace, cleaned.process) };
 			} catch (error) {
-				console.error(error);
-				const message = error instanceof Error ? error.message : String(error);
-				new Notice('VaultPilot remote model failed. Falling back to local mode.');
-				return {
-					answer: [
-						`远程模型调用失败，已退回本地检索模式。`,
-						`失败原因：${message}`,
-						buildLocalAnswer(question, results, activeFile),
-					].join('\n\n'),
-					results,
-					mode: 'local',
-					warning: message,
-				};
+				return this.remoteFailureAnswer(question, activeFile, results, trace, error);
 			}
 		}
 
@@ -156,68 +142,81 @@ export default class VaultPilotPlugin extends Plugin {
 			answer: buildLocalAnswer(question, results, activeFile),
 			results,
 			mode: 'local',
+			trace,
 		};
 	}
 
-	async streamAnswerQuestion(question: string, onDelta: (delta: string) => void): Promise<AgentAnswer> {
-		const { activeFile, activeContent, results } = await this.prepareQuestion(question);
+	async streamAnswerQuestion(question: string, onEvent: (event: AgentStreamEvent) => void): Promise<AgentAnswer> {
+		onEvent({ type: 'status', label: 'Understanding question' });
+		const { activeFile, activeContent, results, trace } = await this.prepareQuestion(question);
+		onEvent({ type: 'status', label: 'Preparing answer' });
 
 		if (this.settings.provider === 'local') {
 			return {
 				answer: buildLocalAnswer(question, results, activeFile),
 				results,
 				mode: 'local',
+				trace,
 			};
 		}
 
 		if (!this.settings.apiKey.trim()) {
-			return {
-				answer: [
-					'当前选择了远程模型模式，但还没有配置 API key。',
-					'请在 VaultPilot 设置里填入 API key，或者切回 Local search。',
-					buildLocalAnswer(question, results, activeFile),
-				].join('\n\n'),
-				results,
-				mode: 'local',
-				warning: 'Missing API key',
-			};
+			return this.missingApiKeyAnswer(question, activeFile, results, trace);
 		}
 
 		try {
-			const answer = await callRemoteModelStream(
+			onEvent({ type: 'status', label: 'Writing answer' });
+			const gate = createAnswerStreamGate(onEvent);
+			const remoteAnswer = await callRemoteModelStream(
 				this.getChatClientOptions(),
 				question,
 				results,
 				activeFile,
 				activeContent,
-				onDelta,
+				(event) => {
+					if (event.type === 'process') {
+						onEvent({ type: 'process', delta: event.delta });
+						return;
+					}
+					gate.push(event.delta);
+				},
 			);
-			return { answer, results, mode: 'remote' };
+			gate.flush();
+			const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
+			return { answer: cleaned.answer, results, mode: 'remote', trace: addModelProcess(trace, cleaned.process) };
 		} catch (error) {
 			console.error(error);
 			const message = error instanceof Error ? error.message : String(error);
 			new Notice('VaultPilot streaming failed. Falling back to normal response.');
 
 			try {
-				const answer = await callRemoteModel(
+				const remoteAnswer = await callRemoteModel(
 					this.getChatClientOptions(),
 					question,
 					results,
 					activeFile,
 					activeContent,
 				);
-				return { answer, results, mode: 'remote', warning: message };
+				const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
+				return {
+					answer: cleaned.answer,
+					results,
+					mode: 'remote',
+					trace: addModelProcess(addTraceWarning(trace, message), cleaned.process),
+					warning: message,
+				};
 			} catch (fallbackError) {
 				const fallbackMessage = fallbackError instanceof Error ? fallbackError.message : String(fallbackError);
 				return {
 					answer: [
-						'远程模型调用失败，已退回本地检索模式。',
-						`流式失败原因：${message}`,
-						`普通请求失败原因：${fallbackMessage}`,
+						'Remote model call failed, so VaultPilot used local search instead.',
+						`Streaming failure: ${message}`,
+						`Fallback request failure: ${fallbackMessage}`,
 						buildLocalAnswer(question, results, activeFile),
 					].join('\n\n'),
 					results,
 					mode: 'local',
+					trace: addTraceWarning(addTraceWarning(trace, message), fallbackMessage),
 					warning: fallbackMessage,
 				};
 			}
@@ -234,15 +233,22 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 
 	async prepareQuestion(question: string): Promise<PreparedQuestion> {
+		const totalStartedAt = Date.now();
 		const activeFile = this.getActiveMarkdownFile();
 		const activeContent =
 			activeFile && this.settings.includeCurrentNote
 				? await this.app.vault.cachedRead(activeFile)
 				: '';
-		const results = await this.searchNotes(
-			activeContent ? `${question} ${activeFile?.basename ?? ''}` : question,
-		);
-		return { activeFile, activeContent, results };
+
+		const understandingStartedAt = Date.now();
+		const rewrite = await this.rewriteQuestion(question, activeFile, activeContent);
+		const understandingMs = Date.now() - understandingStartedAt;
+
+		const retrievalStartedAt = Date.now();
+		const results = await this.searchNotesMany(rewrite.rewrittenQueries);
+		const retrievalMs = Date.now() - retrievalStartedAt;
+		const trace = buildTrace(rewrite, results, understandingMs, retrievalMs, Date.now() - totalStartedAt);
+		return { activeFile, activeContent, results, trace };
 	}
 
 	async refreshAvailableModels(): Promise<string[]> {
@@ -260,6 +266,67 @@ export default class VaultPilotPlugin extends Plugin {
 
 	async saveSettings() {
 		await this.saveData(this.settings);
+	}
+
+	private missingApiKeyAnswer(
+		question: string,
+		activeFile: TFile | null,
+		results: SearchResult[],
+		trace: ResponseTrace,
+	): AgentAnswer {
+		return {
+			answer: [
+				'Remote model mode is selected, but no API key is configured.',
+				'Add an API key in VaultPilot settings, or switch back to Local search.',
+				buildLocalAnswer(question, results, activeFile),
+			].join('\n\n'),
+			results,
+			mode: 'local',
+			trace: addTraceWarning(trace, 'Missing API key'),
+			warning: 'Missing API key',
+		};
+	}
+
+	private remoteFailureAnswer(
+		question: string,
+		activeFile: TFile | null,
+		results: SearchResult[],
+		trace: ResponseTrace,
+		error: unknown,
+	): AgentAnswer {
+		console.error(error);
+		const message = error instanceof Error ? error.message : String(error);
+		new Notice('VaultPilot remote model failed. Falling back to local mode.');
+		return {
+			answer: [
+				'Remote model call failed, so VaultPilot used local search instead.',
+				`Failure reason: ${message}`,
+				buildLocalAnswer(question, results, activeFile),
+			].join('\n\n'),
+			results,
+			mode: 'local',
+			trace: addTraceWarning(trace, message),
+			warning: message,
+		};
+	}
+
+	private async rewriteQuestion(question: string, activeFile: TFile | null, activeContent: string): Promise<QueryRewrite> {
+		if (this.settings.provider === 'local' || !this.settings.apiKey.trim()) {
+			return buildRuleBasedRewrite(question, activeFile, activeContent);
+		}
+
+		try {
+			return await rewriteRetrievalQuery(
+				this.getChatClientOptions(),
+				question,
+				activeFile,
+				activeContent,
+			);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			console.debug('VaultPilot query rewrite failed. Falling back to rule-based rewrite.', error);
+			return buildRuleBasedRewrite(question, activeFile, activeContent, message);
+		}
 	}
 
 	private getVaultPilotView(): VaultPilotView | null {
@@ -298,11 +365,9 @@ export default class VaultPilotPlugin extends Plugin {
 		this.settings.embeddingModel ||= 'nomic-embed-text';
 		this.settings.embeddingBatchSize ||= 8;
 		if (!this.settings.modelsEndpoint) {
-			if (this.settings.provider === 'deepseek') {
-				this.settings.modelsEndpoint = PROVIDER_PRESETS.deepseek.modelsEndpoint;
-			} else {
-				this.settings.modelsEndpoint = '';
-			}
+			this.settings.modelsEndpoint = this.settings.provider === 'deepseek'
+				? PROVIDER_PRESETS.deepseek.modelsEndpoint
+				: '';
 		}
 		if (this.settings.provider === 'deepseek') {
 			this.settings.endpoint = PROVIDER_PRESETS.deepseek.endpoint;
@@ -311,4 +376,153 @@ export default class VaultPilotPlugin extends Plugin {
 			}
 		}
 	}
+}
+
+function buildTrace(
+	rewrite: QueryRewrite,
+	results: SearchResult[],
+	understandingMs: number,
+	retrievalMs: number,
+	totalMs: number,
+): ResponseTrace {
+	return {
+		originalQuestion: rewrite.originalQuestion,
+		rewrittenQuery: rewrite.rewrittenQueries.join('\n'),
+		rewriteMethod: rewrite.method,
+		retrievalMode: RETRIEVAL_MODE_LABEL,
+		sourceCount: results.length,
+		sources: results.map((result) => ({
+			title: result.file.basename,
+			path: result.file.path,
+			score: result.score,
+			excerpt: result.excerpt,
+			section: result.chunk?.headingPath.join(' > ') || result.chunk?.title,
+			lines: result.chunk ? `${result.chunk.startLine}-${result.chunk.endLine}` : undefined,
+			matches: result.matches,
+		})),
+		confidenceSummary: summarizeRetrievalConfidence(results),
+		modelProcess: [],
+		timings: {
+			understandingMs,
+			retrievalMs,
+			totalMs,
+		},
+		warnings: rewrite.warning ? [rewrite.warning] : [],
+	};
+}
+
+function summarizeRetrievalConfidence(results: SearchResult[]): string {
+	if (results.length === 0) {
+		return 'No reliable vault evidence found.';
+	}
+	const topScore = results[0]?.score ?? 0;
+	if (topScore < MIN_USABLE_TOP_SCORE) {
+		return 'Retrieved candidates look weak. Treat the answer as tentative.';
+	}
+	if (topScore >= 0.75 || results.length >= 3) {
+		return 'Vault evidence looks usable. Review sources before relying on details.';
+	}
+	return 'Vault evidence is thin. Treat the answer as tentative.';
+}
+
+function addTraceWarning(trace: ResponseTrace, warning: string): ResponseTrace {
+	return {
+		...trace,
+		warnings: Array.from(new Set([...trace.warnings, warning])),
+	};
+}
+
+function addModelProcess(trace: ResponseTrace, process: string[]): ResponseTrace {
+	if (process.length === 0) {
+		return trace;
+	}
+	return {
+		...trace,
+		modelProcess: [...trace.modelProcess, ...process],
+	};
+}
+
+function cleanAnswerForDisplay(answer: string, reasoning: string): { answer: string; process: string[] } {
+	const process = reasoning.trim() ? [reasoning.trim()] : [];
+	const paragraphs = answer
+		.split(/\n{2,}/u)
+		.map((paragraph) => paragraph.trim())
+		.filter(Boolean);
+
+	while (paragraphs.length > 1 && isProcessParagraph(paragraphs[0] ?? '')) {
+		const shifted = paragraphs.shift();
+		if (shifted) {
+			process.push(shifted);
+		}
+	}
+
+	const cleaned = paragraphs.join('\n\n').replace(/^\u56de\u7b54[:\uff1a]\s*/u, '').trim();
+	return {
+		answer: cleaned || answer.trim(),
+		process,
+	};
+}
+
+function createAnswerStreamGate(onEvent: (event: AgentStreamEvent) => void): { push: (delta: string) => void; flush: () => void } {
+	let answerGateOpen = false;
+	let pendingAnswer = '';
+
+	return {
+		push(delta: string) {
+			if (answerGateOpen) {
+				onEvent({ type: 'answer', delta });
+				return;
+			}
+
+			pendingAnswer += delta;
+			const firstParagraphComplete = /\n{2,}/u.test(pendingAnswer);
+			if (!firstParagraphComplete && pendingAnswer.length <= 160) {
+				return;
+			}
+
+			const parts = pendingAnswer.split(/\n{2,}/u);
+			while (parts.length > 1 && isProcessParagraph(parts[0]?.trim() ?? '')) {
+				const processParagraph = parts.shift()?.trim();
+				if (processParagraph) {
+					onEvent({ type: 'process', delta: `\n\n${processParagraph}` });
+				}
+			}
+
+			pendingAnswer = parts.join('\n\n');
+			if (pendingAnswer && (!isProcessParagraph(pendingAnswer) || firstParagraphComplete)) {
+				answerGateOpen = true;
+				onEvent({ type: 'answer', delta: pendingAnswer });
+				pendingAnswer = '';
+			}
+		},
+		flush() {
+			if (pendingAnswer) {
+				if (isProcessParagraph(pendingAnswer)) {
+					onEvent({ type: 'process', delta: `\n\n${pendingAnswer.trim()}` });
+				} else {
+					onEvent({ type: 'answer', delta: pendingAnswer });
+				}
+				pendingAnswer = '';
+			}
+		},
+	};
+}
+
+function isProcessParagraph(paragraph: string): boolean {
+	const normalized = paragraph.toLowerCase();
+	return [
+		'\u6211\u4eec\u6839\u636e',
+		'\u6211\u6839\u636e',
+		'\u9700\u8981\u603b\u7ed3',
+		'\u9700\u8981\u5148',
+		'\u63d0\u4f9b\u7684\u7b14\u8bb0',
+		'\u6839\u636e\u63d0\u4f9b',
+		'\u7528\u6237\u95ee',
+		'\u7528\u6237\u7684\u95ee\u9898',
+		'\u5148\u5206\u6790',
+		'i will',
+		'i need to',
+		'based on the provided',
+		'the provided notes',
+	].some((marker) => normalized.includes(marker));
 }

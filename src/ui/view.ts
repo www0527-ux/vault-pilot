@@ -1,7 +1,7 @@
 /* eslint-disable obsidianmd/ui/sentence-case */
 import { ItemView, MarkdownRenderer, TFile, WorkspaceLeaf } from 'obsidian';
 import { IndexStats } from '../rag/index-manager';
-import { SearchResult } from '../rag/types';
+import { AgentAnswer, SearchResult } from '../rag/types';
 import type VaultPilotPlugin from '../main';
 
 export const VIEW_TYPE_VAULTPILOT = 'vaultpilot-agent-view';
@@ -52,7 +52,7 @@ export class VaultPilotView extends ItemView {
 		this.messagesEl = containerEl.createDiv({ cls: 'vaultpilot-messages' });
 		this.addMessage(
 			'assistant',
-			'你好。你可以直接问我关于这个 vault 的问题，也可以让我解释项目、整理思路或寻找相关笔记。',
+			'Hi. Ask me about this vault, or ask for related notes, project context, or an explanation of the current note.',
 		);
 
 		this.inputEl = containerEl.createEl('textarea', {
@@ -64,10 +64,9 @@ export class VaultPilotView extends ItemView {
 		const sendButton = footer.createEl('button', { text: 'Ask VaultPilot' });
 		sendButton.addEventListener('click', () => {
 			const question = this.inputEl.value.trim();
-			if (!question) {
-				return;
+			if (question) {
+				void this.ask(question);
 			}
-			void this.ask(question);
 		});
 
 		this.inputEl.addEventListener('keydown', (event) => {
@@ -90,21 +89,34 @@ export class VaultPilotView extends ItemView {
 	async ask(question: string) {
 		this.inputEl.value = '';
 		this.addMessage('user', question);
-		const loading = this.addMessage('assistant', '正在检索你的笔记...');
+		const loading = this.addMessage('assistant', '');
+		const live = this.renderLiveAnswerShell(loading);
+		let liveAnswer = '';
+		let liveProcess = '';
 
-		let streamedAnswer = '';
-		const answer = await this.plugin.streamAnswerQuestion(question, (delta) => {
-			streamedAnswer += delta;
-			loading.setText(streamedAnswer);
+		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
+			if (event.type === 'status') {
+				this.updateLiveStatus(live.statusTitle, event.label);
+				this.scrollMessagesToBottom();
+				return;
+			}
+			if (event.type === 'process') {
+				liveProcess += event.delta;
+				this.updateLiveProcess(live.processEl, liveProcess);
+				this.scrollMessagesToBottom();
+				return;
+			}
+			liveAnswer += event.delta;
+			this.updateLiveAnswer(live.answerEl, liveAnswer);
 			this.scrollMessagesToBottom();
 		});
-		await this.renderAssistantAnswer(loading, answer.answer, answer.results);
+		await this.renderAssistantAnswer(loading, answer);
 		this.scrollMessagesToBottom();
 	}
 
 	async suggestLinksFor(file: TFile) {
 		this.addMessage('user', `Suggest links for [[${file.basename}]]`);
-		const loading = this.addMessage('assistant', '正在寻找相关笔记...');
+		const loading = this.addMessage('assistant', 'Searching for related notes...');
 		const suggestions = await this.plugin.suggestLinks(file);
 
 		if (suggestions.length === 0) {
@@ -126,71 +138,123 @@ export class VaultPilotView extends ItemView {
 		return message;
 	}
 
-	private async renderAssistantAnswer(message: HTMLElement, answer: string, results: SearchResult[]) {
+	private async renderAssistantAnswer(message: HTMLElement, answer: AgentAnswer) {
 		message.empty();
+		this.renderProcessSummary(message, answer);
+
 		const markdownEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered' });
 		await MarkdownRenderer.render(
 			this.app,
-			answer,
+			answer.answer,
 			markdownEl,
 			this.plugin.getActiveMarkdownFile()?.path ?? 'VaultPilot.md',
 			this,
 		);
+
+		this.renderSources(message, answer.results);
+	}
+
+	private renderLiveAnswerShell(message: HTMLElement): {
+		statusTitle: HTMLElement;
+		processEl: HTMLElement;
+		answerEl: HTMLElement;
+	} {
+		message.empty();
+		const status = message.createEl('details', { cls: 'vaultpilot-process-summary is-working', attr: { open: 'true' } });
+		const summary = status.createEl('summary');
+		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
+		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
+		const steps = status.createDiv({ cls: 'vaultpilot-process-steps' });
+		steps.createSpan({ text: 'Understand question' });
+		steps.createSpan({ text: 'Search notes' });
+		steps.createSpan({ text: 'Prepare answer' });
+		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
+		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
+		return { statusTitle, processEl, answerEl };
+	}
+
+	private updateLiveStatus(statusTitle: HTMLElement, label: string) {
+		statusTitle.setText(label);
+	}
+
+	private updateLiveProcess(processEl: HTMLElement, process: string) {
+		processEl.setText(process.trim());
+	}
+
+	private updateLiveAnswer(answerEl: HTMLElement, answer: string) {
+		answerEl.setText(answer);
+	}
+
+	private renderProcessSummary(message: HTMLElement, answer: AgentAnswer) {
+		const details = message.createEl('details', { cls: 'vaultpilot-process-summary' });
+		const summary = details.createEl('summary');
+		summary.createSpan({ cls: 'vaultpilot-process-check', text: '✓' });
+		summary.createSpan({
+			cls: 'vaultpilot-process-title',
+			text: buildProcessSummaryText(answer),
+		});
+		summary.createSpan({
+			cls: 'vaultpilot-process-time',
+			text: formatElapsed(answer.trace.timings.totalMs),
+		});
+
+		const grid = details.createDiv({ cls: 'vaultpilot-trace-grid' });
+		this.renderTraceRow(grid, 'Original question', answer.trace.originalQuestion);
+		this.renderTraceRow(grid, 'Retrieval query', answer.trace.rewrittenQuery);
+		this.renderTraceRow(grid, 'Rewrite method', answer.trace.rewriteMethod);
+		this.renderTraceRow(grid, 'Retrieval mode', answer.trace.retrievalMode);
+		this.renderTraceRow(grid, 'References', `${answer.trace.sourceCount}`);
+		this.renderTraceRow(grid, 'Confidence', answer.trace.confidenceSummary);
+		this.renderTraceRow(
+			grid,
+			'Timing',
+			`understanding ${formatElapsed(answer.trace.timings.understandingMs)}, retrieval ${formatElapsed(answer.trace.timings.retrievalMs)}, total ${formatElapsed(answer.trace.timings.totalMs)}`,
+		);
+		if (answer.trace.modelProcess.length > 0) {
+			this.renderTraceRow(grid, 'Model process', answer.trace.modelProcess.join('\n\n'));
+		}
+		if (answer.trace.warnings.length > 0) {
+			this.renderTraceRow(grid, 'Warnings', answer.trace.warnings.join('; '));
+		}
+	}
+
+	private renderSources(message: HTMLElement, results: SearchResult[]) {
+		const section = message.createDiv({ cls: 'vaultpilot-sources' });
+		section.createEl('h3', { text: 'Sources' });
+
 		if (results.length === 0) {
+			section.createDiv({ cls: 'vaultpilot-source-empty', text: 'No reliable vault sources were found.' });
 			return;
 		}
 
-		const links = message.createDiv({ cls: 'vaultpilot-note-links' });
-		links.createSpan({ cls: 'vaultpilot-note-links-label', text: '相关笔记' });
-		for (const result of results) {
-			const link = links.createEl('button', { text: result.file.basename });
-			link.addEventListener('click', () => {
-				void this.app.workspace.getLeaf(false).openFile(result.file);
-			});
-		}
-
-		this.renderRetrievalDebug(message, results);
-	}
-
-	private renderRetrievalDebug(message: HTMLElement, results: SearchResult[]) {
-		const details = message.createEl('details', { cls: 'vaultpilot-retrieval-debug' });
-		details.createEl('summary', { text: `Retrieved sources (${results.length})` });
-
 		for (const [index, result] of results.entries()) {
-			const item = details.createDiv({ cls: 'vaultpilot-retrieval-debug-item' });
-			const header = item.createDiv({ cls: 'vaultpilot-retrieval-debug-header' });
-			header.createSpan({
-				cls: 'vaultpilot-retrieval-debug-rank',
-				text: `${index + 1}`,
+			const item = section.createDiv({ cls: 'vaultpilot-source-item' });
+			const titleRow = item.createDiv({ cls: 'vaultpilot-source-title-row' });
+			titleRow.createSpan({ cls: 'vaultpilot-source-rank', text: `${index + 1}.` });
+			const openButton = titleRow.createEl('button', {
+				cls: 'vaultpilot-source-open',
+				text: result.file.basename,
 			});
-			header.createSpan({
-				cls: 'vaultpilot-retrieval-debug-path',
-				text: result.file.path,
-			});
-			header.createSpan({
-				cls: 'vaultpilot-retrieval-debug-score',
-				text: `score ${result.score}`,
+			openButton.addEventListener('click', () => {
+				void this.app.workspace.getLeaf(false).openFile(result.file);
 			});
 
 			if (result.chunk) {
 				item.createDiv({
-					cls: 'vaultpilot-retrieval-debug-section',
-					text: `section: ${result.chunk.headingPath.join(' > ') || result.chunk.title}`,
-				});
-				item.createDiv({
-					cls: 'vaultpilot-retrieval-debug-lines',
-					text: `lines: ${result.chunk.startLine}-${result.chunk.endLine}`,
+					cls: 'vaultpilot-source-meta',
+					text: `${result.chunk.headingPath.join(' > ') || result.chunk.title} - lines ${result.chunk.startLine}-${result.chunk.endLine}`,
 				});
 			}
 			item.createDiv({
-				cls: 'vaultpilot-retrieval-debug-matches',
-				text: `matches: ${result.matches.join(', ') || 'none'}`,
-			});
-			item.createDiv({
-				cls: 'vaultpilot-retrieval-debug-excerpt',
+				cls: 'vaultpilot-source-excerpt',
 				text: result.excerpt || '(empty excerpt)',
 			});
 		}
+	}
+
+	private renderTraceRow(container: HTMLElement, label: string, value: string) {
+		container.createDiv({ cls: 'vaultpilot-trace-label', text: label });
+		container.createDiv({ cls: 'vaultpilot-trace-value', text: value });
 	}
 
 	private renderIndexStatus(stats: IndexStats) {
@@ -201,7 +265,7 @@ export class VaultPilotView extends ItemView {
 		if (stats.status === 'loading') {
 			this.indexStatusEl.createSpan({ cls: 'vaultpilot-spinner' });
 			this.indexStatusEl.createSpan({
-				text: `正在从缓存加载索引 · ${stats.fileCount} notes · ${formatElapsed(stats.elapsedMs)}`,
+				text: `Loading index from cache - ${stats.fileCount} notes - ${formatElapsed(stats.elapsedMs)}`,
 			});
 			this.startStatusTimer();
 			return;
@@ -210,7 +274,7 @@ export class VaultPilotView extends ItemView {
 		if (stats.status === 'building') {
 			this.indexStatusEl.createSpan({ cls: 'vaultpilot-spinner' });
 			this.indexStatusEl.createSpan({
-				text: `初次加载数据构建中 · ${stats.fileCount} notes · ${formatElapsed(stats.elapsedMs)}`,
+				text: `Building index - ${stats.fileCount} notes - ${formatElapsed(stats.elapsedMs)}`,
 			});
 			this.startStatusTimer();
 			return;
@@ -220,12 +284,12 @@ export class VaultPilotView extends ItemView {
 		if (stats.status === 'ready') {
 			const sourceLabel = stats.source === 'disk' ? 'cache' : 'rebuilt';
 			this.indexStatusEl.createSpan({
-				text: `Indexed ${stats.fileCount} notes · ${stats.chunkCount} chunks · ${stats.embeddingCount} embeddings · ${sourceLabel} · ${formatElapsed(stats.elapsedMs)}`,
+				text: `Indexed ${stats.fileCount} notes - ${stats.chunkCount} chunks - ${stats.embeddingCount} embeddings - ${sourceLabel} - ${formatElapsed(stats.elapsedMs)}`,
 			});
 			return;
 		}
 
-		this.indexStatusEl.createSpan({ text: `Index not built · ${stats.fileCount} notes` });
+		this.indexStatusEl.createSpan({ text: `Index not built - ${stats.fileCount} notes` });
 	}
 
 	private startStatusTimer() {
@@ -261,4 +325,18 @@ function formatElapsed(ms: number): string {
 		return `${ms}ms`;
 	}
 	return `${(ms / 1000).toFixed(1)}s`;
+}
+
+function buildProcessSummaryText(answer: AgentAnswer): string {
+	const count = answer.results.length;
+	if (count === 0) {
+		return 'Processed, no reliable references found';
+	}
+	if (answer.trace.confidenceSummary.toLowerCase().includes('weak')) {
+		return `Found ${count} weak candidate reference${count === 1 ? '' : 's'}`;
+	}
+	if (answer.mode === 'remote') {
+		return `Answered using ${count} reference${count === 1 ? '' : 's'}`;
+	}
+	return `Found ${count} candidate reference${count === 1 ? '' : 's'}`;
 }

@@ -97,6 +97,46 @@ export class IndexManager {
 		return this.searchHybrid(index, query, tokens, limit);
 	}
 
+	async searchMany(queries: string[], limit: number): Promise<SearchResult[]> {
+		const normalizedQueries = Array.from(new Set(queries.map((query) => query.trim()).filter(Boolean)));
+		if (normalizedQueries.length === 0) {
+			return [];
+		}
+
+		const index = await this.getIndex();
+		const merged = new Map<string, SearchResult & { retrievalScore: number; queryHits: number }>();
+		for (const query of normalizedQueries) {
+			const tokens = tokenize(query);
+			if (tokens.length === 0) {
+				continue;
+			}
+			const results = await this.searchHybrid(index, query, tokens, EMBEDDING_CANDIDATE_LIMIT);
+			for (const result of results) {
+				const key = result.chunk?.id ?? result.file.path;
+				const existing = merged.get(key);
+				if (existing) {
+					existing.retrievalScore = Math.max(existing.retrievalScore, result.score);
+					existing.queryHits += 1;
+					existing.matches = Array.from(new Set([...existing.matches, ...result.matches])).slice(0, 10);
+					continue;
+				}
+				merged.set(key, {
+					...result,
+					retrievalScore: result.score,
+					queryHits: 1,
+				});
+			}
+		}
+
+		return Array.from(merged.values())
+			.map((result) => ({
+				...result,
+				score: roundScore(rerankScore(result, normalizedQueries)),
+			}))
+			.sort((a, b) => b.score - a.score)
+			.slice(0, limit);
+	}
+
 	async ensureReady(): Promise<IndexStats> {
 		await this.getIndex();
 		return this.getStats();
@@ -394,6 +434,7 @@ export class IndexManager {
 				...result,
 				score: roundScore((result.bm25Score ?? 0) * BM25_WEIGHT + (result.embeddingScore ?? 0) * EMBEDDING_WEIGHT),
 			}))
+			.filter((result) => bm25Results.length === 0 || hasLexicalEvidence(result))
 			.sort((a, b) => b.score - a.score)
 			.slice(0, limit);
 	}
@@ -510,4 +551,49 @@ function createEmbeddingExcerpt(content: string): string {
 
 function roundScore(score: number): number {
 	return Math.round(score * 100) / 100;
+}
+
+function hasLexicalEvidence(result: SearchResult & { bm25Score?: number; embeddingScore?: number }): boolean {
+	return (result.bm25Score ?? 0) > 0 || result.matches.some((match) => match !== 'semantic');
+}
+
+function rerankScore(
+	result: SearchResult & { retrievalScore: number; queryHits: number },
+	queries: string[],
+): number {
+	const title = normalizeForRerank(result.file.basename);
+	const path = normalizeForRerank(result.file.path);
+	const heading = normalizeForRerank(result.chunk?.headingPath.join(' ') ?? result.chunk?.title ?? '');
+	const queryText = normalizeForRerank(queries.join(' '));
+	const queryTokens = tokenize(queries.join(' ')).map(normalizeForRerank);
+
+	let boost = 0;
+	if (title && queryText.includes(title)) {
+		boost += 1.2;
+	}
+	if (path && queryText.includes(path)) {
+		boost += 0.8;
+	}
+	if (queryTokens.some((token) => token.length > 2 && title.includes(token))) {
+		boost += 0.7;
+	}
+	if (queryTokens.some((token) => token.length > 2 && path.includes(token))) {
+		boost += 0.5;
+	}
+	if (queryTokens.some((token) => token.length > 2 && heading.includes(token))) {
+		boost += 0.4;
+	}
+	boost += Math.min(result.queryHits, 3) * 0.08;
+
+	return result.retrievalScore + boost;
+}
+
+function normalizeForRerank(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/\.md$/u, '')
+		.replace(/[_-]+/gu, ' ')
+		.replace(/[^\p{L}\p{N}\s]+/gu, ' ')
+		.replace(/\s+/gu, ' ')
+		.trim();
 }
