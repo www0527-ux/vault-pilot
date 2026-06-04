@@ -15,9 +15,10 @@ interface IndexedChunk {
 	fileTokens: Set<string>;
 }
 
-interface Bm25Index {
+export interface Bm25Index {
 	chunks: IndexedChunk[];
-	documentFrequency: Map<string, number>;
+	documentFrequency: Map<string, number>; // token -> number of chunks containing the token
+	invertedIndex: Map<string, Set<number>>; // token -> matching chunk indexes
 	averageLength: number;
 }
 
@@ -26,15 +27,25 @@ export function searchChunksWithBm25(chunks: NoteChunk[], queryTokens: string[],
 		return [];
 	}
 
-	const index = buildIndex(chunks);
-	return index.chunks
+	const index = buildBm25Index(chunks);
+	return searchBm25Index(index, queryTokens, limit);
+}
+
+export function searchBm25Index(index: Bm25Index, queryTokens: string[], limit: number): SearchResult[] {
+	if (index.chunks.length === 0 || queryTokens.length === 0) {
+		return [];
+	}
+
+	const candidates = getCandidateChunks(index, queryTokens);
+	return candidates
 		.map((indexedChunk) => scoreIndexedChunk(index, indexedChunk, queryTokens))
 		.filter((result): result is SearchResult => result !== null)
 		.sort((a, b) => b.score - a.score)
 		.slice(0, limit);
 }
 
-function buildIndex(chunks: NoteChunk[]): Bm25Index {
+// Prepare the data for BM25 search by tokenizing chunks and calculating reusable corpus statistics.
+export function buildBm25Index(chunks: NoteChunk[]): Bm25Index {
 	const indexedChunks = chunks.map((chunk) => {
 		const tokens = tokenize(chunkSearchText(chunk));
 		const termFrequency = new Map<string, number>();
@@ -52,16 +63,41 @@ function buildIndex(chunks: NoteChunk[]): Bm25Index {
 	});
 
 	const documentFrequency = new Map<string, number>();
-	for (const indexedChunk of indexedChunks) {
+	const invertedIndex = new Map<string, Set<number>>();
+	for (let chunkIndex = 0; chunkIndex < indexedChunks.length; chunkIndex += 1) {
+		const indexedChunk = indexedChunks[chunkIndex];
+		if (!indexedChunk) {
+			continue;
+		}
 		for (const token of new Set(indexedChunk.tokens)) {
 			documentFrequency.set(token, (documentFrequency.get(token) ?? 0) + 1);
+			const postings = invertedIndex.get(token) ?? new Set<number>();
+			postings.add(chunkIndex);
+			invertedIndex.set(token, postings);
 		}
 	}
 
 	const averageLength =
 		indexedChunks.reduce((total, chunk) => total + chunk.length, 0) / indexedChunks.length;
 
-	return { chunks: indexedChunks, documentFrequency, averageLength };
+	return { chunks: indexedChunks, documentFrequency, invertedIndex, averageLength };
+}
+
+function getCandidateChunks(index: Bm25Index, queryTokens: string[]): IndexedChunk[] {
+	const candidateIndexes = new Set<number>();
+	for (const token of new Set(queryTokens)) {
+		const postings = index.invertedIndex.get(token);
+		if (!postings) {
+			continue;
+		}
+		for (const chunkIndex of postings) {
+			candidateIndexes.add(chunkIndex);
+		}
+	}
+
+	return Array.from(candidateIndexes)
+		.map((chunkIndex) => index.chunks[chunkIndex])
+		.filter((chunk): chunk is IndexedChunk => chunk !== undefined);
 }
 
 function scoreIndexedChunk(

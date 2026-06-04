@@ -11,6 +11,10 @@ export interface VaultPilotSettings {
 	apiKey: string;
 	model: string;
 	availableModels: string[];
+	embeddingEnabled: boolean;
+	embeddingEndpoint: string;
+	embeddingModel: string;
+	embeddingBatchSize: number;
 	maxResults: number;
 	includeCurrentNote: boolean;
 }
@@ -40,6 +44,10 @@ export const DEFAULT_SETTINGS: VaultPilotSettings = {
 	apiKey: '',
 	model: '',
 	availableModels: [],
+	embeddingEnabled: true,
+	embeddingEndpoint: 'http://localhost:11434/api/embed',
+	embeddingModel: 'nomic-embed-text',
+	embeddingBatchSize: 8,
 	maxResults: 5,
 	includeCurrentNote: true,
 };
@@ -84,6 +92,8 @@ export class VaultPilotSettingTab extends PluginSettingTab {
 			this.displayRemoteSettings(containerEl);
 		}
 
+		this.displayEmbeddingSettings(containerEl);
+
 		new Setting(containerEl)
 			.setName('Maximum sources')
 			.setDesc('How many notes VaultPilot should show and use for each answer.')
@@ -106,6 +116,46 @@ export class VaultPilotSettingTab extends PluginSettingTab {
 					this.plugin.settings.includeCurrentNote = value;
 					await this.plugin.saveSettings();
 				}),
+			);
+	}
+
+	private displayEmbeddingSettings(containerEl: HTMLElement) {
+		new Setting(containerEl).setName('Embedding retrieval').setHeading();
+
+		new Setting(containerEl)
+			.setName('Use local embeddings')
+			.setDesc('Use Ollama embeddings for semantic retrieval. If Ollama is unavailable, VaultPilot falls back to BM25.')
+			.addToggle((toggle) =>
+				toggle.setValue(this.plugin.settings.embeddingEnabled).onChange(async (value) => {
+					this.plugin.settings.embeddingEnabled = value;
+					await this.plugin.saveSettings();
+				}),
+			);
+
+		new Setting(containerEl)
+			.setName('Ollama embed endpoint')
+			.setDesc('Default Ollama embedding endpoint.')
+			.addText((text) =>
+				text
+					.setPlaceholder('http://localhost:11434/api/embed')
+					.setValue(this.plugin.settings.embeddingEndpoint)
+					.onChange(async (value) => {
+						this.plugin.settings.embeddingEndpoint = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Embedding model')
+			.setDesc('Use nomic-embed-text for the first local embedding test.')
+			.addText((text) =>
+				text
+					.setPlaceholder('nomic-embed-text')
+					.setValue(this.plugin.settings.embeddingModel)
+					.onChange(async (value) => {
+						this.plugin.settings.embeddingModel = value;
+						await this.plugin.saveSettings();
+					}),
 			);
 	}
 

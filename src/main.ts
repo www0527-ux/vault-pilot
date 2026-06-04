@@ -5,8 +5,9 @@ import {
 	callRemoteModelStream,
 	refreshAvailableModels,
 } from './llm/chat';
+import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
-import { searchNotes, suggestLinks } from './rag/search';
+import { suggestLinks } from './rag/search';
 import { AgentAnswer, PreparedQuestion, SearchResult } from './rag/types';
 import {
 	DEFAULT_SETTINGS,
@@ -18,9 +19,11 @@ import { VaultPilotView, VIEW_TYPE_VAULTPILOT } from './ui/view';
 
 export default class VaultPilotPlugin extends Plugin {
 	settings!: VaultPilotSettings;
+	indexManager!: IndexManager;
 
 	async onload() {
 		await this.loadSettings();
+		this.indexManager = new IndexManager(this.app.vault, () => this.getEmbeddingSettings());
 
 		this.registerView(
 			VIEW_TYPE_VAULTPILOT,
@@ -61,6 +64,24 @@ export default class VaultPilotPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: 'rebuild-index',
+			name: 'Rebuild index',
+			callback: async () => {
+				const stats = await this.indexManager.rebuild();
+				new Notice(`VaultPilot indexed ${stats.fileCount} notes and ${stats.chunkCount} chunks.`);
+			},
+		});
+
+		this.addCommand({
+			id: 'clear-index-cache',
+			name: 'Clear index cache',
+			callback: async () => {
+				await this.indexManager.clear();
+				new Notice('VaultPilot index cache cleared.');
+			},
+		});
+
 		this.addSettingTab(new VaultPilotSettingTab(this.app, this));
 	}
 
@@ -85,7 +106,7 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 
 	async searchNotes(query: string, limit = this.settings.maxResults): Promise<SearchResult[]> {
-		return searchNotes(this.app.vault, query, limit);
+		return this.indexManager.search(query, limit);
 	}
 
 	async answerQuestion(question: string): Promise<AgentAnswer> {
@@ -254,6 +275,16 @@ export default class VaultPilotPlugin extends Plugin {
 		};
 	}
 
+	private getEmbeddingSettings() {
+		return {
+			enabled: this.settings.embeddingEnabled,
+			provider: 'ollama' as const,
+			endpoint: this.settings.embeddingEndpoint,
+			model: this.settings.embeddingModel,
+			batchSize: this.settings.embeddingBatchSize,
+		};
+	}
+
 	private normalizeSettings() {
 		const legacyProvider = this.settings.provider as string;
 		if (legacyProvider === 'openai-compatible') {
@@ -262,6 +293,10 @@ export default class VaultPilotPlugin extends Plugin {
 		if (!Array.isArray(this.settings.availableModels)) {
 			this.settings.availableModels = [];
 		}
+		this.settings.embeddingEnabled ??= true;
+		this.settings.embeddingEndpoint ||= 'http://localhost:11434/api/embed';
+		this.settings.embeddingModel ||= 'nomic-embed-text';
+		this.settings.embeddingBatchSize ||= 8;
 		if (!this.settings.modelsEndpoint) {
 			if (this.settings.provider === 'deepseek') {
 				this.settings.modelsEndpoint = PROVIDER_PRESETS.deepseek.modelsEndpoint;

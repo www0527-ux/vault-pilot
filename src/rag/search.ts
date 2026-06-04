@@ -1,25 +1,6 @@
 import { TFile, Vault } from 'obsidian';
-import { searchChunksWithBm25 } from './bm25';
-import { chunkMarkdownNote } from './chunker';
 import { SearchResult } from './types';
-import { extractHeadings, extractWikiLinks, stripFrontmatter, tokenize } from './text';
-
-export async function searchNotes(vault: Vault, query: string, limit: number): Promise<SearchResult[]> {
-	const tokens = tokenize(query);
-	if (tokens.length === 0) {
-		return [];
-	}
-
-	const files = vault.getMarkdownFiles();
-	const chunksByFile = await Promise.all(
-		files.map(async (file) => {
-			const content = await vault.cachedRead(file);
-			return chunkMarkdownNote(file, content);
-		}),
-	);
-
-	return searchChunksWithBm25(chunksByFile.flat(), tokens, limit);
-}
+import { extractHeadings, extractWikiLinks, stripFrontmatter } from './text';
 
 export async function suggestLinks(
 	vault: Vault,

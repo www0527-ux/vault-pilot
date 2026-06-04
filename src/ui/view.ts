@@ -1,5 +1,6 @@
 /* eslint-disable obsidianmd/ui/sentence-case */
 import { ItemView, MarkdownRenderer, TFile, WorkspaceLeaf } from 'obsidian';
+import { IndexStats } from '../rag/index-manager';
 import { SearchResult } from '../rag/types';
 import type VaultPilotPlugin from '../main';
 
@@ -9,6 +10,10 @@ export class VaultPilotView extends ItemView {
 	private plugin: VaultPilotPlugin;
 	private inputEl!: HTMLTextAreaElement;
 	private messagesEl!: HTMLElement;
+	private indexStatusEl!: HTMLElement;
+	private latestIndexStats: IndexStats | null = null;
+	private stopIndexListener: (() => void) | null = null;
+	private statusTimer: number | null = null;
 
 	constructor(leaf: WorkspaceLeaf, plugin: VaultPilotPlugin) {
 		super(leaf);
@@ -35,6 +40,14 @@ export class VaultPilotView extends ItemView {
 		const header = containerEl.createDiv({ cls: 'vaultpilot-header' });
 		header.createEl('h2', { text: 'VaultPilot' });
 		header.createEl('p', { text: 'Ask naturally. VaultPilot will use your notes when they help.' });
+		this.indexStatusEl = header.createDiv({ cls: 'vaultpilot-index-status' });
+		this.stopIndexListener = this.plugin.indexManager.onChange((stats) => {
+			this.latestIndexStats = stats;
+			this.renderIndexStatus(stats);
+		});
+		void this.plugin.indexManager.ensureReady().catch((error) => {
+			console.error(error);
+		});
 
 		this.messagesEl = containerEl.createDiv({ cls: 'vaultpilot-messages' });
 		this.addMessage(
@@ -68,10 +81,16 @@ export class VaultPilotView extends ItemView {
 		});
 	}
 
+	async onClose() {
+		this.stopIndexListener?.();
+		this.stopIndexListener = null;
+		this.stopStatusTimer();
+	}
+
 	async ask(question: string) {
 		this.inputEl.value = '';
 		this.addMessage('user', question);
-		const loading = this.addMessage('assistant', 'Thinking through your vault...');
+		const loading = this.addMessage('assistant', '正在检索你的笔记...');
 
 		let streamedAnswer = '';
 		const answer = await this.plugin.streamAnswerQuestion(question, (delta) => {
@@ -85,7 +104,7 @@ export class VaultPilotView extends ItemView {
 
 	async suggestLinksFor(file: TFile) {
 		this.addMessage('user', `Suggest links for [[${file.basename}]]`);
-		const loading = this.addMessage('assistant', 'Looking for related notes...');
+		const loading = this.addMessage('assistant', '正在寻找相关笔记...');
 		const suggestions = await this.plugin.suggestLinks(file);
 
 		if (suggestions.length === 0) {
@@ -174,10 +193,72 @@ export class VaultPilotView extends ItemView {
 		}
 	}
 
+	private renderIndexStatus(stats: IndexStats) {
+		this.indexStatusEl.empty();
+		const isBusy = stats.status === 'building' || stats.status === 'loading';
+		this.indexStatusEl.toggleClass('is-building', isBusy);
+
+		if (stats.status === 'loading') {
+			this.indexStatusEl.createSpan({ cls: 'vaultpilot-spinner' });
+			this.indexStatusEl.createSpan({
+				text: `正在从缓存加载索引 · ${stats.fileCount} notes · ${formatElapsed(stats.elapsedMs)}`,
+			});
+			this.startStatusTimer();
+			return;
+		}
+
+		if (stats.status === 'building') {
+			this.indexStatusEl.createSpan({ cls: 'vaultpilot-spinner' });
+			this.indexStatusEl.createSpan({
+				text: `初次加载数据构建中 · ${stats.fileCount} notes · ${formatElapsed(stats.elapsedMs)}`,
+			});
+			this.startStatusTimer();
+			return;
+		}
+
+		this.stopStatusTimer();
+		if (stats.status === 'ready') {
+			const sourceLabel = stats.source === 'disk' ? 'cache' : 'rebuilt';
+			this.indexStatusEl.createSpan({
+				text: `Indexed ${stats.fileCount} notes · ${stats.chunkCount} chunks · ${stats.embeddingCount} embeddings · ${sourceLabel} · ${formatElapsed(stats.elapsedMs)}`,
+			});
+			return;
+		}
+
+		this.indexStatusEl.createSpan({ text: `Index not built · ${stats.fileCount} notes` });
+	}
+
+	private startStatusTimer() {
+		if (this.statusTimer !== null) {
+			return;
+		}
+		this.statusTimer = window.setInterval(() => {
+			if (this.latestIndexStats?.status === 'building' || this.latestIndexStats?.status === 'loading') {
+				this.latestIndexStats = this.plugin.indexManager.getStats();
+				this.renderIndexStatus(this.latestIndexStats);
+			}
+		}, 250);
+	}
+
+	private stopStatusTimer() {
+		if (this.statusTimer === null) {
+			return;
+		}
+		window.clearInterval(this.statusTimer);
+		this.statusTimer = null;
+	}
+
 	private scrollMessagesToBottom() {
 		const viewWindow = this.containerEl.ownerDocument.defaultView ?? window;
 		viewWindow.requestAnimationFrame(() => {
 			this.messagesEl.scrollTo({ top: this.messagesEl.scrollHeight, behavior: 'smooth' });
 		});
 	}
+}
+
+function formatElapsed(ms: number): string {
+	if (ms < 1000) {
+		return `${ms}ms`;
+	}
+	return `${(ms / 1000).toFixed(1)}s`;
 }
