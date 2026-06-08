@@ -19,7 +19,7 @@ export interface SearchResult {
 	chunk?: NoteChunk;
 }
 
-export type QueryRewriteMethod = 'rule-based' | 'remote';
+export type QueryRewriteMethod = 'rule-based' | 'remote' | 'agent-tool';
 
 export interface QueryRewrite {
 	originalQuestion: string;
@@ -48,6 +48,7 @@ export interface ResponseTrace {
 	retrievalMode: string;
 	sourceCount: number;
 	sources: TraceSource[];
+	toolCalls?: TraceToolCall[];
 	confidenceSummary: string;
 	modelProcess: string[];
 	timings: {
@@ -56,6 +57,15 @@ export interface ResponseTrace {
 		totalMs: number;
 	};
 	warnings: string[];
+}
+
+export interface TraceToolCall {
+	name: string;
+	ok: boolean;
+	input: string;
+	summary: string;
+	durationMs: number;
+	error?: string;
 }
 
 export interface AgentAnswer {

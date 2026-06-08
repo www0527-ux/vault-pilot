@@ -2,6 +2,7 @@ import { requestUrl, TFile } from 'obsidian';
 import { VaultPilotSettings } from '../settings';
 import { normalizeRemoteRewrite } from '../rag/query-rewrite';
 import { QueryRewrite, SearchResult } from '../rag/types';
+import { ToolCall, ToolDefinition } from '../agent/types';
 
 export interface ChatClientOptions {
 	settings: VaultPilotSettings;
@@ -11,6 +12,31 @@ export interface ChatClientOptions {
 export interface RemoteModelAnswer {
 	answer: string;
 	reasoning: string;
+}
+
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+export interface ChatMessage {
+	role: ChatRole;
+	content: string | null;
+	tool_call_id?: string;
+	tool_calls?: OpenAICompatibleToolCall[];
+}
+
+export interface OpenAICompatibleToolCall {
+	id: string;
+	type: 'function';
+	function: {
+		name: string;
+		arguments: string;
+	};
+}
+
+export interface ToolModelResponse {
+	answer: string;
+	reasoning: string;
+	toolCalls: ToolCall[];
+	rawToolCalls: OpenAICompatibleToolCall[];
 }
 
 export type RemoteStreamEvent =
@@ -80,11 +106,23 @@ export async function rewriteRetrievalQuery(
 		'You are a retrieval query rewriter for an Obsidian vault assistant.',
 		'Rewrite the user question into several search queries for Markdown notes.',
 		'Return only valid JSON with keys: rewrittenQuery, queries, keywords, confidence.',
-		'queries must contain 3-6 distinct retrieval queries. Keep the original entity, add title/path variants, and add semantic variants.',
+		'queries must contain 3-6 distinct retrieval queries.',
+		'Use this rewrite strategy: preserve exact entities first, then decompose complex questions into atomic retrieval needs, then add broader semantic variants only if there is room.',
+		'First classify the user question internally as one of: entity_lookup, concept_question, comparison, multi_part, project_status, current_note, or general_search.',
+		'For complex or multi-part questions, decompose the information need into 2-4 atomic retrieval subqueries. Each subquery should target one fact, relation, comparison side, cause, consequence, or requested attribute.',
+		'Do not expose the classification or decomposition as separate JSON keys. Encode them through the queries array.',
+		'Keep every query self-contained: repeat the exact entity/project/concept names in each subquery instead of using pronouns like it, this, them, or the above.',
+		'Entity preservation is the top priority. Always keep every original proper noun, username, romanized name, file-like token, acronym, and mixed-language token exactly as written.',
+		'For short identity queries such as "who is x", "tell me about x", or the same pattern in another language, include the bare entity token as one query and entity-focused variants such as "x profile", "x person", "x notes", and "x related notes".',
+		'Do not translate, localize, or guess characters for an unknown romanized token. For example, "duzhe" must stay "duzhe"; do not invent Chinese-character aliases unless the user supplied those forms.',
+		'Add title/path variants and semantic variants only after preserving the exact original entity.',
 		'Do not answer the question. Do not invent citations. Do not claim terms were found in the vault.',
-		'Use concise Chinese and English aliases when helpful.',
-		'If the query contains a Chinese person/place/organization name, add likely pinyin and spaced romanization variants.',
+		'Use concise Chinese and English aliases only when they are directly implied by the user question.',
+		'If the query contains a Chinese person/place/organization name supplied in Chinese characters, add likely pinyin and spaced romanization variants.',
 		'For title/path matching, include plausible hyphenated variants when useful.',
+		'Prefer high-precision queries over broad generic queries. Avoid generic identity or related-material terms by themselves unless they are combined with the exact entity.',
+		'Override any malformed or ambiguous examples above with these ASCII rules: unknown romanized tokens must not be translated, generic query words must stay attached to the exact entity, and complex questions should become several precise subqueries.',
+		'Example for a complex question: "Compare project A and project B, and explain why A failed." queries should target "project A", "project B", "project A project B comparison", "project A failure reasons", and "project A failure evidence".',
 		currentNoteHint,
 		`User question: ${question}`,
 	].join('\n\n');
@@ -156,6 +194,55 @@ export async function callRemoteModel(
 	return {
 		answer: content,
 		reasoning: data.choices?.[0]?.message?.reasoning_content?.trim() ?? '',
+	};
+}
+
+export async function completeChatWithTools(
+	options: ChatClientOptions,
+	messages: ChatMessage[],
+	tools: ToolDefinition[],
+): Promise<ToolModelResponse> {
+	const { endpoint, model } = await resolveChatTarget(options);
+	const response = await requestUrl({
+		url: endpoint,
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${options.settings.apiKey.trim()}`,
+		},
+		body: JSON.stringify({
+			model,
+			messages,
+			tools,
+			tool_choice: 'auto',
+			temperature: 0.2,
+			stream: false,
+		}),
+	});
+
+	if (response.status < 200 || response.status >= 300) {
+		throw new Error(`Tool chat HTTP ${response.status}: ${response.text.slice(0, 240)}`);
+	}
+
+	const data = response.json as {
+		choices?: Array<{
+			message?: {
+				content?: string | null;
+				reasoning_content?: string;
+				tool_calls?: OpenAICompatibleToolCall[];
+			};
+		}>;
+	};
+	const message = data.choices?.[0]?.message;
+	if (!message) {
+		throw new Error('Tool chat returned no message.');
+	}
+	const rawToolCalls = message.tool_calls ?? [];
+	return {
+		answer: message.content?.trim() ?? '',
+		reasoning: message.reasoning_content?.trim() ?? '',
+		rawToolCalls,
+		toolCalls: rawToolCalls.map(parseToolCall),
 	};
 }
 
@@ -301,6 +388,25 @@ function parseJsonObject(content: string): Record<string, unknown> {
 			return JSON.parse(jsonText.slice(start, end + 1)) as Record<string, unknown>;
 		}
 		throw new Error('Query rewrite response was not valid JSON.');
+	}
+}
+
+function parseToolCall(call: OpenAICompatibleToolCall): ToolCall {
+	return {
+		id: call.id,
+		name: call.function.name,
+		input: parseToolArguments(call.function.arguments),
+	};
+}
+
+function parseToolArguments(args: string): unknown {
+	if (!args.trim()) {
+		return {};
+	}
+	try {
+		return JSON.parse(args) as unknown;
+	} catch {
+		return { raw: args };
 	}
 }
 

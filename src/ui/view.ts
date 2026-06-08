@@ -188,7 +188,7 @@ export class VaultPilotView extends ItemView {
 	private renderProcessSummary(message: HTMLElement, answer: AgentAnswer) {
 		const details = message.createEl('details', { cls: 'vaultpilot-process-summary' });
 		const summary = details.createEl('summary');
-		summary.createSpan({ cls: 'vaultpilot-process-check', text: '✓' });
+		summary.createSpan({ cls: 'vaultpilot-process-check', text: 'OK' });
 		summary.createSpan({
 			cls: 'vaultpilot-process-title',
 			text: buildProcessSummaryText(answer),
@@ -205,6 +205,9 @@ export class VaultPilotView extends ItemView {
 		this.renderTraceRow(grid, 'Retrieval mode', answer.trace.retrievalMode);
 		this.renderTraceRow(grid, 'References', `${answer.trace.sourceCount}`);
 		this.renderTraceRow(grid, 'Confidence', answer.trace.confidenceSummary);
+		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
+			this.renderTraceRow(grid, 'Tool calls', answer.trace.toolCalls.map(formatToolCall).join('\n\n'));
+		}
 		this.renderTraceRow(
 			grid,
 			'Timing',
@@ -339,4 +342,17 @@ function buildProcessSummaryText(answer: AgentAnswer): string {
 		return `Answered using ${count} reference${count === 1 ? '' : 's'}`;
 	}
 	return `Found ${count} candidate reference${count === 1 ? '' : 's'}`;
+}
+
+function formatToolCall(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
+	const status = toolCall.ok ? 'OK' : 'Failed';
+	const lines = [
+		`${status} ${toolCall.name} (${formatElapsed(toolCall.durationMs)})`,
+		`Input: ${toolCall.input}`,
+		toolCall.summary,
+	];
+	if (toolCall.error) {
+		lines.push(`Error: ${toolCall.error}`);
+	}
+	return lines.join('\n');
 }
