@@ -97,9 +97,34 @@ export class VaultPilotView extends ItemView {
 		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
 			if (event.type === 'status') {
 				this.updateLiveStatus(live.statusTitle, event.label);
-				if (event.label === 'Writing answer' || event.label === 'Preparing answer') {
+				if (event.label === 'Preparing answer') {
 					this.appendLiveTimelineEvent(live.timelineEl, 'thinking', event.label, '');
 				}
+				this.scrollMessagesToBottom();
+				return;
+			}
+			if (event.type === 'step_start') {
+				this.appendLiveTimelineEvent(live.timelineEl, 'thinking', `Step ${event.step}: ${event.label}`, '');
+				this.scrollMessagesToBottom();
+				return;
+			}
+			if (event.type === 'step_finish') {
+				this.appendLiveTimelineEvent(
+					live.timelineEl,
+					'done',
+					`Step ${event.step}: ${event.label}`,
+					formatElapsed(event.durationMs),
+				);
+				this.scrollMessagesToBottom();
+				return;
+			}
+			if (event.type === 'step_error') {
+				this.appendLiveTimelineEvent(
+					live.timelineEl,
+					'error',
+					`Step ${event.step}: ${event.label}`,
+					`${event.error} (${formatElapsed(event.durationMs)})`,
+				);
 				this.scrollMessagesToBottom();
 				return;
 			}
@@ -224,7 +249,11 @@ export class VaultPilotView extends ItemView {
 	private renderProcessSummary(message: HTMLElement, answer: AgentAnswer) {
 		const details = message.createEl('details', { cls: 'vaultpilot-process-summary' });
 		const summary = details.createEl('summary');
-		summary.createSpan({ cls: 'vaultpilot-process-check', text: 'OK' });
+		const hasWarning = answer.trace.warnings.length > 0;
+		summary.createSpan({
+			cls: `vaultpilot-process-check ${hasWarning ? 'is-warning' : ''}`,
+			text: hasWarning ? '!' : 'OK',
+		});
 		summary.createSpan({
 			cls: 'vaultpilot-process-title',
 			text: buildProcessSummaryText(answer),
@@ -368,6 +397,16 @@ function formatElapsed(ms: number): string {
 
 function buildProcessSummaryText(answer: AgentAnswer): string {
 	const count = answer.results.length;
+	if (answer.trace.warnings.includes('Tool-call step limit reached')) {
+		return count === 0
+			? 'Stopped after tool limit'
+			: `Stopped after tool limit with ${count} reference${count === 1 ? '' : 's'}`;
+	}
+	if (answer.trace.warnings.length > 0) {
+		return count === 0
+			? 'Finished with warnings'
+			: `Finished with warnings and ${count} reference${count === 1 ? '' : 's'}`;
+	}
 	if (count === 0) {
 		return 'Processed, no reliable references found';
 	}

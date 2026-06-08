@@ -5,7 +5,8 @@ import { ToolContext, AgentRunRequest, AgentRunResult, ToolExecutionResult } fro
 import { ToolExecutor } from './tool-executor';
 import { ToolRegistry } from './tool-registry';
 
-const DEFAULT_MAX_STEPS = 4;
+const DEFAULT_MAX_STEPS = 6;
+const TOOL_STEP_LIMIT_WARNING = 'Tool-call step limit reached';
 
 export class AgentRunner {
 	constructor(
@@ -25,9 +26,33 @@ export class AgentRunner {
 		const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
 
 		for (let step = 0; step < maxSteps; step += 1) {
-			this.emitStatus(request, step === 0 ? 'Choosing tools' : 'Reviewing tool results');
-			const response = await completeChatWithTools(this.chatOptions, messages, this.registry.listDefinitions());
+			const stepStartedAt = Date.now();
+			const stepNumber = step + 1;
+			const stepLabel = step === 0 ? 'Choosing tools' : 'Reviewing tool results';
+			this.emitStatus(request, stepLabel);
+			request.onEvent?.({ type: 'step_start', step: stepNumber, label: stepLabel });
+
+			let response;
+			try {
+				response = await completeChatWithTools(this.chatOptions, messages, this.registry.listDefinitions());
+			} catch (error) {
+				const message = error instanceof Error ? error.message : String(error);
+				request.onEvent?.({
+					type: 'step_error',
+					step: stepNumber,
+					label: stepLabel,
+					error: message,
+					durationMs: Date.now() - stepStartedAt,
+				});
+				throw error;
+			}
 			if (response.toolCalls.length === 0) {
+				request.onEvent?.({
+					type: 'step_finish',
+					step: stepNumber,
+					label: 'Final answer ready',
+					durationMs: Date.now() - stepStartedAt,
+				});
 				this.emitStatus(request, 'Writing answer');
 				return {
 					answer: response.answer || 'I could not produce an answer from the available tool results.',
@@ -72,14 +97,28 @@ export class AgentRunner {
 					content: JSON.stringify(toModelToolOutput(result)),
 				});
 			}
+
+			request.onEvent?.({
+				type: 'step_finish',
+				step: stepNumber,
+				label: `Completed ${response.toolCalls.length} tool call${response.toolCalls.length === 1 ? '' : 's'}`,
+				durationMs: Date.now() - stepStartedAt,
+			});
 		}
 
+		request.onEvent?.({
+			type: 'step_error',
+			step: maxSteps,
+			label: 'Stopped after tool limit',
+			error: TOOL_STEP_LIMIT_WARNING,
+			durationMs: Date.now() - startedAt,
+		});
 		return {
-			answer: 'The agent reached its tool-call step limit before producing a final answer.',
+			answer: buildStepLimitAnswer(toolResults),
 			results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
 			toolResults,
 			durationMs: Date.now() - startedAt,
-			warnings: ['Tool-call step limit reached'],
+			warnings: [TOOL_STEP_LIMIT_WARNING],
 		};
 	}
 
@@ -98,6 +137,8 @@ function buildSystemPrompt(): string {
 		'Do not make a separate plan visible to the user. Do not expose hidden reasoning.',
 		'After tool results arrive, answer using only the tool-provided vault evidence. Cite note paths in square brackets.',
 		'If the tool results are insufficient, say what is missing and suggest what to search next.',
+		'Do not keep calling tools just to exhaustively inspect every candidate. Once the evidence is enough to answer, stop using tools and write the answer.',
+		'For broad project or documentation-summary questions, summarize the main themes from representative search results and only read specific notes when excerpts are not enough.',
 		'Do not claim a rewritten query or search plan is vault evidence.',
 	].join('\n');
 }
@@ -183,4 +224,30 @@ function summarizeToolResult(result: ToolExecutionResult): string {
 		return `Suggested ${count} related note${count === 1 ? '' : 's'}`;
 	}
 	return 'Completed';
+}
+
+function buildStepLimitAnswer(toolResults: ToolExecutionResult[]): string {
+	const results = dedupeResults(toolResults.flatMap((result) => result.results ?? [])).slice(0, 8);
+	if (results.length === 0) {
+		return [
+			'The agent reached its tool-call step limit before producing a final answer.',
+			'It did not gather enough usable vault evidence to summarize safely.',
+		].join('\n\n');
+	}
+
+	const lines = results.map((result) => {
+		const chunk = result.chunk;
+		const location = chunk
+			? `${result.file.path}, lines ${chunk.startLine}-${chunk.endLine}`
+			: result.file.path;
+		const excerpt = result.excerpt.trim() || '(empty excerpt)';
+		return `- [${result.file.path}] ${location}: ${excerpt}`;
+	});
+
+	return [
+		'The agent reached its tool-call step limit before producing a final answer.',
+		'Here is the partial evidence gathered so far:',
+		lines.join('\n'),
+		'Try asking with a narrower project path or document name for a complete summary.',
+	].join('\n\n');
 }

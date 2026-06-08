@@ -78,6 +78,9 @@ export interface AgentAnswer {
 
 export type AgentStreamEvent =
 	| { type: 'status'; label: string }
+	| { type: 'step_start'; step: number; label: string }
+	| { type: 'step_finish'; step: number; label: string; durationMs: number }
+	| { type: 'step_error'; step: number; label: string; error: string; durationMs: number }
 	| { type: 'answer'; delta: string }
 	| { type: 'process'; delta: string }
 	| { type: 'tool_start'; name: string; inputSummary: string }
