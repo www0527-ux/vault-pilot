@@ -25,10 +25,10 @@ export class AgentRunner {
 		const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
 
 		for (let step = 0; step < maxSteps; step += 1) {
-			request.onStatus?.(step === 0 ? 'Choosing tools' : 'Reviewing tool results');
+			this.emitStatus(request, step === 0 ? 'Choosing tools' : 'Reviewing tool results');
 			const response = await completeChatWithTools(this.chatOptions, messages, this.registry.listDefinitions());
 			if (response.toolCalls.length === 0) {
-				request.onStatus?.('Writing answer');
+				this.emitStatus(request, 'Writing answer');
 				return {
 					answer: response.answer || 'I could not produce an answer from the available tool results.',
 					results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
@@ -50,9 +50,22 @@ export class AgentRunner {
 				if (!call || !rawCall) {
 					continue;
 				}
-				request.onStatus?.(`Running ${call.name}`);
+				this.emitStatus(request, `Running ${call.name}`);
+				request.onEvent?.({
+					type: 'tool_start',
+					name: call.name,
+					inputSummary: summarizeToolInput(call.name, call.input),
+				});
 				const result = await this.executor.execute(call, this.context);
 				toolResults.push(result);
+				request.onEvent?.({
+					type: 'tool_result',
+					name: call.name,
+					ok: result.ok,
+					summary: summarizeToolResult(result),
+					durationMs: result.durationMs,
+					error: result.error,
+				});
 				messages.push({
 					role: 'tool',
 					tool_call_id: rawCall.id,
@@ -68,6 +81,11 @@ export class AgentRunner {
 			durationMs: Date.now() - startedAt,
 			warnings: ['Tool-call step limit reached'],
 		};
+	}
+
+	private emitStatus(request: AgentRunRequest, label: string): void {
+		request.onStatus?.(label);
+		request.onEvent?.({ type: 'status', label });
 	}
 }
 
@@ -120,4 +138,49 @@ function dedupeResults(results: SearchResult[]): SearchResult[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
+}
+
+function summarizeToolInput(name: string, input: unknown): string {
+	if (!isRecord(input)) {
+		return '';
+	}
+	if (name === 'search_notes') {
+		const query = typeof input.query === 'string' ? input.query.trim() : '';
+		const queries = Array.isArray(input.queries)
+			? input.queries.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+			: [];
+		const limit = typeof input.limit === 'number' && Number.isFinite(input.limit) ? `, limit ${input.limit}` : '';
+		if (queries.length > 1) {
+			return `${query || queries[0]} (${queries.length} queries${limit})`;
+		}
+		return query ? `${query}${limit}` : '';
+	}
+	if (name === 'read_note' || name === 'suggest_links') {
+		return typeof input.path === 'string' && input.path.trim() ? input.path.trim() : 'current note';
+	}
+	return '';
+}
+
+function summarizeToolResult(result: ToolExecutionResult): string {
+	if (!result.ok) {
+		return result.error ?? 'Tool failed';
+	}
+	if (result.call.name === 'search_notes' && result.results) {
+		const count = result.results.length;
+		const topPaths = result.results.slice(0, 3).map((item) => item.file.path);
+		return [`Found ${count} reference${count === 1 ? '' : 's'}`, ...topPaths].join('\n');
+	}
+	if (result.call.name === 'read_note' && isRecord(result.output)) {
+		const path = typeof result.output.path === 'string' ? result.output.path : '';
+		return path ? `Read ${path}` : 'Read note';
+	}
+	if (result.call.name === 'get_current_note' && isRecord(result.output)) {
+		const path = typeof result.output.path === 'string' ? result.output.path : '';
+		return path ? `Read current note: ${path}` : 'Checked current note';
+	}
+	if (result.call.name === 'suggest_links' && result.results) {
+		const count = result.results.length;
+		return `Suggested ${count} related note${count === 1 ? '' : 's'}`;
+	}
+	return 'Completed';
 }

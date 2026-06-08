@@ -1,4 +1,4 @@
-import { SearchResult } from '../rag/types';
+import { AgentStreamEvent, SearchResult } from '../rag/types';
 import { RetrievalService } from '../services/retrieval-service';
 import { VaultNoteService } from '../services/vault-note-service';
 
@@ -54,6 +54,7 @@ export interface AgentRunRequest {
 	question: string;
 	maxSteps?: number;
 	onStatus?: (label: string) => void;
+	onEvent?: (event: AgentStreamEvent) => void;
 	onAnswerDelta?: (delta: string) => void;
 }
 

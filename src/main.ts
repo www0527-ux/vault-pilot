@@ -193,11 +193,7 @@ export default class VaultPilotPlugin extends Plugin {
 		if (this.canUseToolCalling()) {
 			try {
 				onEvent({ type: 'status', label: 'Choosing tools' });
-				return await this.answerQuestionWithTools(
-					question,
-					(label) => onEvent({ type: 'status', label }),
-					(delta) => onEvent({ type: 'answer', delta }),
-				);
+				return await this.answerQuestionWithTools(question, onEvent);
 			} catch (error) {
 				console.error(error);
 				new Notice('VaultPilot tool calling failed. Falling back to fixed RAG.');
@@ -297,8 +293,7 @@ export default class VaultPilotPlugin extends Plugin {
 
 	private async answerQuestionWithTools(
 		question: string,
-		onStatus?: (label: string) => void,
-		onAnswerDelta?: (delta: string) => void,
+		onEvent?: (event: AgentStreamEvent) => void,
 	): Promise<AgentAnswer> {
 		const runner = new AgentRunner(
 			this.getChatClientOptions(),
@@ -310,7 +305,7 @@ export default class VaultPilotPlugin extends Plugin {
 				maxResults: this.settings.maxResults,
 			},
 		);
-		const result = await runner.run({ question, onStatus, onAnswerDelta });
+		const result = await runner.run({ question, onEvent });
 		return {
 			answer: result.answer,
 			results: result.results,

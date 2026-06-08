@@ -97,12 +97,35 @@ export class VaultPilotView extends ItemView {
 		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
 			if (event.type === 'status') {
 				this.updateLiveStatus(live.statusTitle, event.label);
+				if (event.label === 'Writing answer' || event.label === 'Preparing answer') {
+					this.appendLiveTimelineEvent(live.timelineEl, 'thinking', event.label, '');
+				}
 				this.scrollMessagesToBottom();
 				return;
 			}
 			if (event.type === 'process') {
 				liveProcess += event.delta;
 				this.updateLiveProcess(live.processEl, liveProcess);
+				this.scrollMessagesToBottom();
+				return;
+			}
+			if (event.type === 'tool_start') {
+				this.appendLiveTimelineEvent(
+					live.timelineEl,
+					'tool',
+					`Using ${formatToolName(event.name)}`,
+					event.inputSummary,
+				);
+				this.scrollMessagesToBottom();
+				return;
+			}
+			if (event.type === 'tool_result') {
+				this.appendLiveTimelineEvent(
+					live.timelineEl,
+					event.ok ? 'done' : 'error',
+					`${formatToolName(event.name)} ${event.ok ? 'finished' : 'failed'} (${formatElapsed(event.durationMs)})`,
+					event.error ?? event.summary,
+				);
 				this.scrollMessagesToBottom();
 				return;
 			}
@@ -156,6 +179,7 @@ export class VaultPilotView extends ItemView {
 
 	private renderLiveAnswerShell(message: HTMLElement): {
 		statusTitle: HTMLElement;
+		timelineEl: HTMLElement;
 		processEl: HTMLElement;
 		answerEl: HTMLElement;
 	} {
@@ -168,13 +192,25 @@ export class VaultPilotView extends ItemView {
 		steps.createSpan({ text: 'Understand question' });
 		steps.createSpan({ text: 'Search notes' });
 		steps.createSpan({ text: 'Prepare answer' });
+		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
+		this.appendLiveTimelineEvent(timelineEl, 'thinking', 'Understanding question', '');
 		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
 		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
-		return { statusTitle, processEl, answerEl };
+		return { statusTitle, timelineEl, processEl, answerEl };
 	}
 
 	private updateLiveStatus(statusTitle: HTMLElement, label: string) {
 		statusTitle.setText(label);
+	}
+
+	private appendLiveTimelineEvent(container: HTMLElement, kind: 'thinking' | 'tool' | 'done' | 'error', title: string, detail: string) {
+		const row = container.createDiv({ cls: `vaultpilot-live-step vaultpilot-live-step-${kind}` });
+		row.createSpan({ cls: 'vaultpilot-live-step-dot' });
+		const body = row.createDiv({ cls: 'vaultpilot-live-step-body' });
+		body.createDiv({ cls: 'vaultpilot-live-step-title', text: title });
+		if (detail.trim()) {
+			body.createDiv({ cls: 'vaultpilot-live-step-detail', text: detail.trim() });
+		}
 	}
 
 	private updateLiveProcess(processEl: HTMLElement, process: string) {
@@ -355,4 +391,12 @@ function formatToolCall(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>
 		lines.push(`Error: ${toolCall.error}`);
 	}
 	return lines.join('\n');
+}
+
+function formatToolName(name: string): string {
+	return name
+		.split('_')
+		.filter(Boolean)
+		.map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+		.join(' ');
 }

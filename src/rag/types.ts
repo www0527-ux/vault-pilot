@@ -79,7 +79,9 @@ export interface AgentAnswer {
 export type AgentStreamEvent =
 	| { type: 'status'; label: string }
 	| { type: 'answer'; delta: string }
-	| { type: 'process'; delta: string };
+	| { type: 'process'; delta: string }
+	| { type: 'tool_start'; name: string; inputSummary: string }
+	| { type: 'tool_result'; name: string; ok: boolean; summary: string; durationMs: number; error?: string };
 
 export interface PreparedQuestion {
 	activeFile: TFile | null;
