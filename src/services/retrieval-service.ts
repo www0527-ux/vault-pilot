@@ -1,5 +1,5 @@
 import { TFile } from 'obsidian';
-import { SearchResult } from '../rag/types';
+import { FolderInspection, FolderInspectionOptions, SearchResult } from '../rag/types';
 import type VaultPilotPlugin from '../main';
 
 export interface RetrievalSearchInput {
@@ -22,6 +22,10 @@ export class RetrievalService {
 
 	async suggestLinks(file: TFile): Promise<SearchResult[]> {
 		return this.plugin.suggestLinks(file);
+	}
+
+	async inspectFolder(options: FolderInspectionOptions): Promise<FolderInspection> {
+		return this.plugin.inspectFolder(options);
 	}
 }
 

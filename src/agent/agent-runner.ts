@@ -138,6 +138,7 @@ function buildSystemPrompt(): string {
 		'If the tool results are insufficient, say what is missing and suggest what to search next.',
 		'Do not keep calling tools just to exhaustively inspect every candidate. Once the evidence is enough to answer, stop using tools and write the answer.',
 		'For broad project or documentation-summary questions, summarize the main themes from representative search results and only read specific notes when excerpts are not enough.',
+		'For folder-level questions, call inspect_folder first. Do not use repeated read_note calls to scan a folder.',
 		'Do not claim a rewritten query or search plan is vault evidence.',
 	].join('\n');
 }
@@ -198,6 +199,13 @@ function summarizeToolInput(name: string, input: unknown): string {
 	if (name === 'read_note' || name === 'suggest_links') {
 		return typeof input.path === 'string' && input.path.trim() ? input.path.trim() : 'current note';
 	}
+	if (name === 'inspect_folder') {
+		const path = typeof input.path === 'string' ? input.path.trim() : '';
+		const maxFiles = typeof input.maxFiles === 'number' && Number.isFinite(input.maxFiles)
+			? `, max ${input.maxFiles} files`
+			: '';
+		return `${path || 'vault root'}${maxFiles}`;
+	}
 	return '';
 }
 
@@ -209,6 +217,12 @@ function summarizeToolResult(result: ToolExecutionResult): string {
 		const count = result.results.length;
 		const topPaths = result.results.slice(0, 3).map((item) => item.file.path);
 		return [`Found ${count} reference${count === 1 ? '' : 's'}`, ...topPaths].join('\n');
+	}
+	if (result.call.name === 'inspect_folder' && isRecord(result.output)) {
+		const fileCount = typeof result.output.fileCount === 'number' ? result.output.fileCount : 0;
+		const chunkCount = typeof result.output.chunkCount === 'number' ? result.output.chunkCount : 0;
+		const returnedFileCount = typeof result.output.returnedFileCount === 'number' ? result.output.returnedFileCount : 0;
+		return `Inspected ${fileCount} file${fileCount === 1 ? '' : 's'} and ${chunkCount} chunk${chunkCount === 1 ? '' : 's'}; returned ${returnedFileCount} file summaries`;
 	}
 	if (result.call.name === 'read_note' && isRecord(result.output)) {
 		const path = typeof result.output.path === 'string' ? result.output.path : '';

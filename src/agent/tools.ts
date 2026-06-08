@@ -10,9 +10,17 @@ interface ReadNoteInput {
 	path?: string;
 }
 
+interface InspectFolderInput {
+	path?: string;
+	maxFiles?: number;
+	maxHeadingsPerFile?: number;
+	maxExcerptsPerFile?: number;
+}
+
 export function createDefaultTools(): AgentTool<unknown, unknown>[] {
 	return [
 		getCurrentNoteTool,
+		inspectFolderTool,
 		readNoteTool,
 		searchNotesTool,
 		suggestLinksTool,
@@ -51,6 +59,47 @@ const readNoteTool: AgentTool<ReadNoteInput, unknown> = {
 			throw new Error('read_note requires path.');
 		}
 		return context.vaultNotes.readNote(input.path.trim());
+	},
+};
+
+const inspectFolderTool: AgentTool<InspectFolderInput, unknown> = {
+	name: 'inspect_folder',
+	description: [
+		'Inspect a vault folder using the existing chunk index.',
+		'Use this first for folder-level or project-documentation summary questions.',
+		'It returns compact file, subfolder, heading, and excerpt overviews without reading every note in full.',
+	].join(' '),
+	risk: 'read',
+	schema: {
+		type: 'object',
+		properties: {
+			path: {
+				type: 'string',
+				description: 'Vault-relative folder path. Use an empty string for the vault root.',
+			},
+			maxFiles: {
+				type: 'number',
+				description: 'Maximum number of file summaries to return.',
+			},
+			maxHeadingsPerFile: {
+				type: 'number',
+				description: 'Maximum headings to return per file.',
+			},
+			maxExcerptsPerFile: {
+				type: 'number',
+				description: 'Maximum representative excerpts to return per file.',
+			},
+		},
+		required: ['path'],
+		additionalProperties: false,
+	},
+	async execute(input: InspectFolderInput, context: ToolContext) {
+		return context.retrieval.inspectFolder({
+			path: input.path?.trim() ?? '',
+			maxFiles: input.maxFiles,
+			maxHeadingsPerFile: input.maxHeadingsPerFile,
+			maxExcerptsPerFile: input.maxExcerptsPerFile,
+		});
 	},
 };
 

@@ -19,6 +19,36 @@ export interface SearchResult {
 	chunk?: NoteChunk;
 }
 
+export interface FolderInspectionOptions {
+	path: string;
+	maxFiles?: number;
+	maxHeadingsPerFile?: number;
+	maxExcerptsPerFile?: number;
+}
+
+export interface FolderInspection {
+	path: string;
+	fileCount: number;
+	chunkCount: number;
+	returnedFileCount: number;
+	truncated: boolean;
+	topSubfolders: Array<{
+		path: string;
+		fileCount: number;
+	}>;
+	topHeadings: Array<{
+		heading: string;
+		count: number;
+	}>;
+	files: Array<{
+		path: string;
+		basename: string;
+		chunkCount: number;
+		headings: string[];
+		excerpts: string[];
+	}>;
+}
+
 export type QueryRewriteMethod = 'rule-based' | 'remote' | 'agent-tool';
 
 export interface QueryRewrite {

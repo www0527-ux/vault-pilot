@@ -15,7 +15,16 @@ import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
 import { buildRuleBasedRewrite } from './rag/query-rewrite';
 import { suggestLinks } from './rag/search';
-import { AgentAnswer, AgentStreamEvent, PreparedQuestion, QueryRewrite, ResponseTrace, SearchResult } from './rag/types';
+import {
+	AgentAnswer,
+	AgentStreamEvent,
+	FolderInspection,
+	FolderInspectionOptions,
+	PreparedQuestion,
+	QueryRewrite,
+	ResponseTrace,
+	SearchResult,
+} from './rag/types';
 import { RetrievalService } from './services/retrieval-service';
 import { VaultNoteService } from './services/vault-note-service';
 import {
@@ -131,6 +140,10 @@ export default class VaultPilotPlugin extends Plugin {
 
 	async searchNotesMany(queries: string[], limit = this.settings.maxResults): Promise<SearchResult[]> {
 		return this.indexManager.searchMany(queries, limit);
+	}
+
+	async inspectFolder(options: FolderInspectionOptions): Promise<FolderInspection> {
+		return this.indexManager.inspectFolder(options);
 	}
 
 	async answerQuestion(question: string): Promise<AgentAnswer> {
@@ -569,10 +582,19 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 	if (!result.ok) {
 		return result.error ?? 'Tool failed';
 	}
+	if (result.call.name === 'inspect_folder' && isRecord(result.output)) {
+		const fileCount = typeof result.output.fileCount === 'number' ? result.output.fileCount : 0;
+		const chunkCount = typeof result.output.chunkCount === 'number' ? result.output.chunkCount : 0;
+		return `Inspected ${fileCount} file${fileCount === 1 ? '' : 's'} and ${chunkCount} chunk${chunkCount === 1 ? '' : 's'}`;
+	}
 	if (result.results) {
 		return `Returned ${result.results.length} result${result.results.length === 1 ? '' : 's'}`;
 	}
 	return 'Completed';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null;
 }
 
 function cleanAnswerForDisplay(answer: string, reasoning: string): { answer: string; process: string[] } {

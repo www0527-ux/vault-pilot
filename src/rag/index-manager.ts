@@ -9,7 +9,7 @@ import {
 	embeddingTextForChunk,
 	hashEmbeddingText,
 } from './embeddings';
-import { NoteChunk, SearchResult } from './types';
+import { FolderInspection, FolderInspectionOptions, NoteChunk, SearchResult } from './types';
 import { tokenize } from './text';
 
 const CACHE_VERSION = 2;
@@ -18,7 +18,13 @@ const CACHE_FILE_NAME = `${CACHE_DIR}/index-cache.json`;
 const EMBEDDING_CANDIDATE_LIMIT = 30;
 const BM25_WEIGHT = 0.3;
 const EMBEDDING_WEIGHT = 0.7;
+const MIN_RELEVANT_SCORE = 0.35;
+const MIN_RELATIVE_RELEVANCE = 0.4;
+const MIN_MULTI_QUERY_RELEVANT_SCORE = 0.28;
 const EXCLUDED_MARKDOWN_PATH_PREFIXES = ['_rag_eval/'];
+const DEFAULT_FOLDER_MAX_FILES = 60;
+const DEFAULT_FOLDER_MAX_HEADINGS_PER_FILE = 8;
+const DEFAULT_FOLDER_MAX_EXCERPTS_PER_FILE = 2;
 
 export interface IndexStats {
 	status: 'empty' | 'loading' | 'building' | 'ready';
@@ -128,13 +134,50 @@ export class IndexManager {
 			}
 		}
 
-		return Array.from(merged.values())
+		const rankedResults = Array.from(merged.values())
 			.map((result) => ({
 				...result,
 				score: roundScore(rerankScore(result, normalizedQueries)),
 			}))
-			.sort((a, b) => b.score - a.score)
-			.slice(0, limit);
+			.sort((a, b) => b.score - a.score);
+
+		return pruneWeakResults(rankedResults, limit);
+	}
+
+	async inspectFolder(options: FolderInspectionOptions): Promise<FolderInspection> {
+		const index = await this.getIndex();
+		const folderPath = normalizeFolderPath(options.path);
+		const maxFiles = clampPositiveInteger(options.maxFiles, DEFAULT_FOLDER_MAX_FILES, 200);
+		const maxHeadingsPerFile = clampPositiveInteger(
+			options.maxHeadingsPerFile,
+			DEFAULT_FOLDER_MAX_HEADINGS_PER_FILE,
+			20,
+		);
+		const maxExcerptsPerFile = clampPositiveInteger(
+			options.maxExcerptsPerFile,
+			DEFAULT_FOLDER_MAX_EXCERPTS_PER_FILE,
+			5,
+		);
+
+		const chunks = index.chunks.filter((chunk) => isChunkInFolder(chunk, folderPath));
+		const files = buildFolderFileSummaries(chunks, maxHeadingsPerFile, maxExcerptsPerFile);
+		const sortedFiles = files.sort((a, b) => {
+			if (b.chunkCount !== a.chunkCount) {
+				return b.chunkCount - a.chunkCount;
+			}
+			return a.path.localeCompare(b.path);
+		});
+
+		return {
+			path: folderPath,
+			fileCount: files.length,
+			chunkCount: chunks.length,
+			returnedFileCount: Math.min(sortedFiles.length, maxFiles),
+			truncated: sortedFiles.length > maxFiles,
+			topSubfolders: topSubfolders(files.map((file) => file.path), folderPath),
+			topHeadings: topHeadings(chunks),
+			files: sortedFiles.slice(0, maxFiles),
+		};
 	}
 
 	async ensureReady(): Promise<IndexStats> {
@@ -551,6 +594,137 @@ function createEmbeddingExcerpt(content: string): string {
 
 function roundScore(score: number): number {
 	return Math.round(score * 100) / 100;
+}
+
+function pruneWeakResults<T extends SearchResult & { queryHits: number }>(results: T[], limit: number): T[] {
+	if (results.length === 0 || limit <= 0) {
+		return [];
+	}
+
+	const topScore = results[0]?.score ?? 0;
+	if (topScore < MIN_RELEVANT_SCORE) {
+		return [];
+	}
+
+	const relativeFloor = roundScore(topScore * MIN_RELATIVE_RELEVANCE);
+	const scoreFloor = Math.max(MIN_RELEVANT_SCORE, relativeFloor);
+
+	return results
+		.filter((result) => {
+			if (result.score >= scoreFloor) {
+				return true;
+			}
+			return result.queryHits > 1 && result.score >= MIN_MULTI_QUERY_RELEVANT_SCORE;
+		})
+		.slice(0, limit);
+}
+
+function normalizeFolderPath(path: string): string {
+	return path.trim().replaceAll('\\', '/').replace(/^\/+/u, '').replace(/\/+$/u, '');
+}
+
+function isChunkInFolder(chunk: NoteChunk, folderPath: string): boolean {
+	if (!folderPath) {
+		return true;
+	}
+	const normalizedPath = chunk.file.path.replaceAll('\\', '/');
+	return normalizedPath === folderPath || normalizedPath.startsWith(`${folderPath}/`);
+}
+
+function buildFolderFileSummaries(
+	chunks: NoteChunk[],
+	maxHeadingsPerFile: number,
+	maxExcerptsPerFile: number,
+): FolderInspection['files'] {
+	const byFile = new Map<string, {
+		path: string;
+		basename: string;
+		chunkCount: number;
+		headings: string[];
+		excerpts: string[];
+	}>();
+
+	for (const chunk of chunks) {
+		const entry = byFile.get(chunk.file.path) ?? {
+			path: chunk.file.path,
+			basename: chunk.file.basename,
+			chunkCount: 0,
+			headings: [],
+			excerpts: [],
+		};
+		entry.chunkCount += 1;
+		for (const heading of chunk.headingPath) {
+			if (entry.headings.length >= maxHeadingsPerFile) {
+				break;
+			}
+			if (!entry.headings.includes(heading)) {
+				entry.headings.push(heading);
+			}
+		}
+		if (entry.excerpts.length < maxExcerptsPerFile) {
+			const excerpt = firstContentLine(chunk.content);
+			if (excerpt && !entry.excerpts.includes(excerpt)) {
+				entry.excerpts.push(excerpt);
+			}
+		}
+		byFile.set(chunk.file.path, entry);
+	}
+
+	return Array.from(byFile.values());
+}
+
+function topSubfolders(paths: string[], folderPath: string): FolderInspection['topSubfolders'] {
+	const counts = new Map<string, number>();
+	for (const path of paths) {
+		const normalizedPath = path.replaceAll('\\', '/');
+		const relative = folderPath && normalizedPath.startsWith(`${folderPath}/`)
+			? normalizedPath.slice(folderPath.length + 1)
+			: normalizedPath;
+		const [firstSegment] = relative.split('/');
+		if (!firstSegment || firstSegment.endsWith('.md')) {
+			continue;
+		}
+		const subfolder = folderPath ? `${folderPath}/${firstSegment}` : firstSegment;
+		counts.set(subfolder, (counts.get(subfolder) ?? 0) + 1);
+	}
+	return Array.from(counts.entries())
+		.map(([path, fileCount]) => ({ path, fileCount }))
+		.sort((a, b) => b.fileCount - a.fileCount || a.path.localeCompare(b.path))
+		.slice(0, 12);
+}
+
+function topHeadings(chunks: NoteChunk[]): FolderInspection['topHeadings'] {
+	const counts = new Map<string, number>();
+	for (const chunk of chunks) {
+		for (const heading of chunk.headingPath) {
+			if (!heading || heading === chunk.file.basename) {
+				continue;
+			}
+			counts.set(heading, (counts.get(heading) ?? 0) + 1);
+		}
+	}
+	return Array.from(counts.entries())
+		.map(([heading, count]) => ({ heading, count }))
+		.sort((a, b) => b.count - a.count || a.heading.localeCompare(b.heading))
+		.slice(0, 20);
+}
+
+function firstContentLine(content: string): string {
+	const line = content
+		.split(/\r?\n/)
+		.map((candidate) => candidate.replace(/^#+\s*/u, '').trim())
+		.find(Boolean);
+	if (!line) {
+		return '';
+	}
+	return line.length > 220 ? `${line.slice(0, 217)}...` : line;
+}
+
+function clampPositiveInteger(value: number | undefined, fallback: number, max: number): number {
+	if (typeof value !== 'number' || !Number.isFinite(value)) {
+		return fallback;
+	}
+	return Math.max(1, Math.min(Math.round(value), max));
 }
 
 function hasLexicalEvidence(result: SearchResult & { bm25Score?: number; embeddingScore?: number }): boolean {
