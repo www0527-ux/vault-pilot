@@ -50,11 +50,16 @@ export interface ToolExecutionResult {
 	searchQueries?: string[];
 }
 
+export type AgentToolEvent =
+	| { type: 'tool_start'; tool: string; input: unknown }
+	| { type: 'tool_result'; tool: string; ok: boolean; durationMs: number; resultCount?: number; error?: string };
+
 export interface AgentRunRequest {
 	question: string;
 	maxSteps?: number;
 	onStatus?: (label: string) => void;
 	onAnswerDelta?: (delta: string) => void;
+	onToolEvent?: (event: AgentToolEvent) => void;
 }
 
 export interface AgentRunResult {

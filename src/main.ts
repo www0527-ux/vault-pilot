@@ -9,7 +9,7 @@ import {
 import { AgentRunner } from './agent/agent-runner';
 import { ToolExecutor } from './agent/tool-executor';
 import { ToolRegistry } from './agent/tool-registry';
-import { ToolExecutionResult } from './agent/types';
+import { AgentToolEvent, ToolExecutionResult } from './agent/types';
 import { createDefaultTools } from './agent/tools';
 import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
@@ -197,6 +197,7 @@ export default class VaultPilotPlugin extends Plugin {
 					question,
 					(label) => onEvent({ type: 'status', label }),
 					(delta) => onEvent({ type: 'answer', delta }),
+					(delta) => onEvent({ type: 'process', delta }),
 				);
 			} catch (error) {
 				console.error(error);
@@ -299,6 +300,7 @@ export default class VaultPilotPlugin extends Plugin {
 		question: string,
 		onStatus?: (label: string) => void,
 		onAnswerDelta?: (delta: string) => void,
+		onProcessDelta?: (delta: string) => void,
 	): Promise<AgentAnswer> {
 		const runner = new AgentRunner(
 			this.getChatClientOptions(),
@@ -310,7 +312,12 @@ export default class VaultPilotPlugin extends Plugin {
 				maxResults: this.settings.maxResults,
 			},
 		);
-		const result = await runner.run({ question, onStatus, onAnswerDelta });
+		const result = await runner.run({
+			question,
+			onStatus,
+			onAnswerDelta,
+			onToolEvent: (event) => onProcessDelta?.(formatLiveToolEvent(event)),
+		});
 		return {
 			answer: result.answer,
 			results: result.results,
@@ -578,6 +585,26 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 		return `Returned ${result.results.length} result${result.results.length === 1 ? '' : 's'}`;
 	}
 	return 'Completed';
+}
+
+function formatLiveToolEvent(event: AgentToolEvent): string {
+	if (event.type === 'tool_start') {
+		return `\n\nTool call: ${event.tool}\nInput: ${summarizeToolInput(event.input)}`;
+	}
+	if (!event.ok) {
+		return `\n${event.tool} failed in ${formatElapsed(event.durationMs)}: ${event.error ?? 'Unknown error'}`;
+	}
+	if (typeof event.resultCount === 'number') {
+		return `\n${event.tool} returned ${event.resultCount} result${event.resultCount === 1 ? '' : 's'} in ${formatElapsed(event.durationMs)}`;
+	}
+	return `\n${event.tool} completed in ${formatElapsed(event.durationMs)}`;
+}
+
+function formatElapsed(ms: number): string {
+	if (ms < 1000) {
+		return `${ms}ms`;
+	}
+	return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function cleanAnswerForDisplay(answer: string, reasoning: string): { answer: string; process: string[] } {

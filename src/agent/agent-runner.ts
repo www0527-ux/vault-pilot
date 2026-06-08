@@ -50,7 +50,16 @@ export class AgentRunner {
 					continue;
 				}
 				request.onStatus?.(`Running ${call.name}`);
+				request.onToolEvent?.({ type: 'tool_start', tool: call.name, input: call.input });
 				const result = await this.executor.execute(call, this.context);
+				request.onToolEvent?.({
+					type: 'tool_result',
+					tool: call.name,
+					ok: result.ok,
+					durationMs: result.durationMs,
+					resultCount: result.results?.length,
+					error: result.error,
+				});
 				toolResults.push(result);
 				messages.push({
 					role: 'tool',
