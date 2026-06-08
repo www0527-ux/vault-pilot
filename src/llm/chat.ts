@@ -237,9 +237,13 @@ export async function completeChatWithTools(
 	if (!message) {
 		throw new Error('Tool chat returned no message.');
 	}
-	const rawToolCalls = message.tool_calls ?? [];
+	const content = message.content?.trim() ?? '';
+	const rawToolCalls = message.tool_calls ?? parseTextToolCalls(content);
+	if (rawToolCalls.length === 0 && looksLikeTextToolCall(content)) {
+		throw new Error('The model returned tool-call markup as text instead of structured tool_calls.');
+	}
 	return {
-		answer: message.content?.trim() ?? '',
+		answer: rawToolCalls.length > 0 ? '' : content,
 		reasoning: message.reasoning_content?.trim() ?? '',
 		rawToolCalls,
 		toolCalls: rawToolCalls.map(parseToolCall),
@@ -445,6 +449,66 @@ function parseToolArguments(args: string): unknown {
 	} catch {
 		return { raw: args };
 	}
+}
+
+function parseTextToolCalls(content: string): OpenAICompatibleToolCall[] {
+	if (!looksLikeTextToolCall(content)) {
+		return [];
+	}
+
+	const calls: OpenAICompatibleToolCall[] = [];
+	const invokePattern = /invoke\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)(?=<\s*\/?\s*\|\s*\|\s*DSML\s*\|\s*\|\s*invoke|<\s*\/?\s*\|\s*\|\s*DSML\s*\|\s*\|\s*tool_calls|$)/giu;
+	let match: RegExpExecArray | null;
+	while ((match = invokePattern.exec(content)) !== null) {
+		const name = match[1]?.trim();
+		const body = match[2] ?? '';
+		if (!name) {
+			continue;
+		}
+		calls.push({
+			id: `text_tool_${calls.length + 1}`,
+			type: 'function',
+			function: {
+				name,
+				arguments: JSON.stringify(parseTextToolArguments(body)),
+			},
+		});
+	}
+	return calls;
+}
+
+function parseTextToolArguments(body: string): Record<string, string> {
+	const args: Record<string, string> = {};
+	const parameterPattern = /parameter\s+name=["']([^"']+)["'][^>]*>([\s\S]*?)(?=<\s*\/?\s*\|\s*\|\s*DSML\s*\|\s*\|\s*parameter|$)/giu;
+	let match: RegExpExecArray | null;
+	while ((match = parameterPattern.exec(body)) !== null) {
+		const rawName = match[1]?.trim();
+		if (!rawName) {
+			continue;
+		}
+		const normalizedName = normalizeToolArgumentName(rawName);
+		args[normalizedName] = stripTextToolMarkup(match[2] ?? '');
+	}
+	return args;
+}
+
+function normalizeToolArgumentName(name: string): string {
+	if (name === 'note_path') {
+		return 'path';
+	}
+	return name;
+}
+
+function stripTextToolMarkup(value: string): string {
+	return value
+		.replace(/<\s*\/?\s*\|\s*\|\s*DSML\s*\|\s*\|\s*[^>]+>/giu, '')
+		.replace(/<[^>]+>/gu, '')
+		.trim();
+}
+
+function looksLikeTextToolCall(content: string): boolean {
+	const normalized = content.toLowerCase();
+	return normalized.includes('tool_calls') || normalized.includes('invoke name=') || normalized.includes('dsml');
 }
 
 function parseStreamPart(

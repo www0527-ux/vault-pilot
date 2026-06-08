@@ -99,6 +99,7 @@ function buildSystemPrompt(): string {
 		'Use tools when the answer depends on the user vault, the current note, note contents, or related links.',
 		'When calling search_notes, provide retrieval-ready query parameters yourself.',
 		'Preserve exact entities from the user request. For complex questions, provide several focused queries.',
+		'Use the provider tool-calling API only. Never write XML, DSML, JSON tool-call markup, or pseudo tool calls in message content.',
 		'Do not make a separate plan visible to the user. Do not expose hidden reasoning.',
 		'After tool results arrive, answer using only the tool-provided vault evidence. Cite note paths in square brackets.',
 		'If the tool results are insufficient, say what is missing and suggest what to search next.',
