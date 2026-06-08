@@ -5,7 +5,6 @@ import { ToolContext, AgentRunRequest, AgentRunResult, ToolExecutionResult } fro
 import { ToolExecutor } from './tool-executor';
 import { ToolRegistry } from './tool-registry';
 
-const DEFAULT_MAX_STEPS = 6;
 const TOOL_STEP_LIMIT_WARNING = 'Tool-call step limit reached';
 
 export class AgentRunner {
@@ -23,9 +22,9 @@ export class AgentRunner {
 			{ role: 'user', content: request.question },
 		];
 		const toolResults: ToolExecutionResult[] = [];
-		const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
+		const maxSteps = request.maxSteps;
 
-		for (let step = 0; step < maxSteps; step += 1) {
+		for (let step = 0; maxSteps === undefined || step < maxSteps; step += 1) {
 			const stepStartedAt = Date.now();
 			const stepNumber = step + 1;
 			const stepLabel = step === 0 ? 'Choosing tools' : 'Reviewing tool results';
@@ -108,7 +107,7 @@ export class AgentRunner {
 
 		request.onEvent?.({
 			type: 'step_error',
-			step: maxSteps,
+			step: maxSteps ?? toolResults.length,
 			label: 'Stopped after tool limit',
 			error: TOOL_STEP_LIMIT_WARNING,
 			durationMs: Date.now() - startedAt,
