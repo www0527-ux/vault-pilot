@@ -238,7 +238,8 @@ export async function completeChatWithTools(
 		throw new Error('Tool chat returned no message.');
 	}
 	const content = message.content?.trim() ?? '';
-	const rawToolCalls = message.tool_calls ?? parseTextToolCalls(content);
+	const structuredToolCalls = message.tool_calls ?? [];
+	const rawToolCalls = structuredToolCalls.length > 0 ? structuredToolCalls : parseTextToolCalls(content);
 	if (rawToolCalls.length === 0 && looksLikeTextToolCall(content)) {
 		throw new Error('The model returned tool-call markup as text instead of structured tool_calls.');
 	}
@@ -493,7 +494,7 @@ function parseTextToolArguments(body: string): Record<string, string> {
 }
 
 function normalizeToolArgumentName(name: string): string {
-	if (name === 'note_path') {
+	if (name === 'note_path' || name === 'file_path') {
 		return 'path';
 	}
 	return name;
