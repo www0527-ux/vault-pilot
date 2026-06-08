@@ -6,11 +6,18 @@ import {
 	refreshAvailableModels,
 	rewriteRetrievalQuery,
 } from './llm/chat';
+import { AgentRunner } from './agent/agent-runner';
+import { ToolExecutor } from './agent/tool-executor';
+import { ToolRegistry } from './agent/tool-registry';
+import { ToolExecutionResult } from './agent/types';
+import { createDefaultTools } from './agent/tools';
 import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
 import { buildRuleBasedRewrite } from './rag/query-rewrite';
 import { suggestLinks } from './rag/search';
 import { AgentAnswer, AgentStreamEvent, PreparedQuestion, QueryRewrite, ResponseTrace, SearchResult } from './rag/types';
+import { RetrievalService } from './services/retrieval-service';
+import { VaultNoteService } from './services/vault-note-service';
 import {
 	DEFAULT_SETTINGS,
 	PROVIDER_PRESETS,
@@ -25,10 +32,21 @@ const MIN_USABLE_TOP_SCORE = 0.25;
 export default class VaultPilotPlugin extends Plugin {
 	settings!: VaultPilotSettings;
 	indexManager!: IndexManager;
+	vaultNoteService!: VaultNoteService;
+	retrievalService!: RetrievalService;
+	toolRegistry!: ToolRegistry;
+	toolExecutor!: ToolExecutor;
 
 	async onload() {
 		await this.loadSettings();
 		this.indexManager = new IndexManager(this.app.vault, () => this.getEmbeddingSettings());
+		this.vaultNoteService = new VaultNoteService(this.app);
+		this.retrievalService = new RetrievalService(this);
+		this.toolRegistry = new ToolRegistry();
+		for (const tool of createDefaultTools()) {
+			this.toolRegistry.register(tool);
+		}
+		this.toolExecutor = new ToolExecutor(this.toolRegistry);
 
 		this.registerView(VIEW_TYPE_VAULTPILOT, (leaf) => new VaultPilotView(leaf, this));
 
@@ -116,6 +134,14 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 
 	async answerQuestion(question: string): Promise<AgentAnswer> {
+		if (this.canUseToolCalling()) {
+			try {
+				return await this.answerQuestionWithTools(question);
+			} catch (error) {
+				console.debug('VaultPilot tool calling failed. Falling back to fixed RAG.', error);
+			}
+		}
+
 		const { activeFile, activeContent, results, trace } = await this.prepareQuestion(question);
 
 		if (this.settings.provider !== 'local' && !this.settings.apiKey.trim()) {
@@ -148,10 +174,9 @@ export default class VaultPilotPlugin extends Plugin {
 
 	async streamAnswerQuestion(question: string, onEvent: (event: AgentStreamEvent) => void): Promise<AgentAnswer> {
 		onEvent({ type: 'status', label: 'Understanding question' });
-		const { activeFile, activeContent, results, trace } = await this.prepareQuestion(question);
-		onEvent({ type: 'status', label: 'Preparing answer' });
 
 		if (this.settings.provider === 'local') {
+			const { activeFile, results, trace } = await this.prepareQuestion(question);
 			return {
 				answer: buildLocalAnswer(question, results, activeFile),
 				results,
@@ -161,8 +186,27 @@ export default class VaultPilotPlugin extends Plugin {
 		}
 
 		if (!this.settings.apiKey.trim()) {
+			const { activeFile, results, trace } = await this.prepareQuestion(question);
 			return this.missingApiKeyAnswer(question, activeFile, results, trace);
 		}
+
+		if (this.canUseToolCalling()) {
+			try {
+				onEvent({ type: 'status', label: 'Choosing tools' });
+				return await this.answerQuestionWithTools(
+					question,
+					(label) => onEvent({ type: 'status', label }),
+					(delta) => onEvent({ type: 'answer', delta }),
+				);
+			} catch (error) {
+				console.error(error);
+				new Notice('VaultPilot tool calling failed. Falling back to fixed RAG.');
+				onEvent({ type: 'status', label: 'Searching notes' });
+			}
+		}
+
+		const { activeFile, activeContent, results, trace } = await this.prepareQuestion(question);
+		onEvent({ type: 'status', label: 'Preparing answer' });
 
 		try {
 			onEvent({ type: 'status', label: 'Writing answer' });
@@ -249,6 +293,31 @@ export default class VaultPilotPlugin extends Plugin {
 		const retrievalMs = Date.now() - retrievalStartedAt;
 		const trace = buildTrace(rewrite, results, understandingMs, retrievalMs, Date.now() - totalStartedAt);
 		return { activeFile, activeContent, results, trace };
+	}
+
+	private async answerQuestionWithTools(
+		question: string,
+		onStatus?: (label: string) => void,
+		onAnswerDelta?: (delta: string) => void,
+	): Promise<AgentAnswer> {
+		const runner = new AgentRunner(
+			this.getChatClientOptions(),
+			this.toolRegistry,
+			this.toolExecutor,
+			{
+				vaultNotes: this.vaultNoteService,
+				retrieval: this.retrievalService,
+				maxResults: this.settings.maxResults,
+			},
+		);
+		const result = await runner.run({ question, onStatus, onAnswerDelta });
+		return {
+			answer: result.answer,
+			results: result.results,
+			mode: 'remote',
+			trace: buildAgentTrace(question, result.results, result.toolResults, result.durationMs, result.warnings),
+			warning: result.warnings.join('; ') || undefined,
+		};
 	}
 
 	async refreshAvailableModels(): Promise<string[]> {
@@ -342,6 +411,10 @@ export default class VaultPilotPlugin extends Plugin {
 		};
 	}
 
+	private canUseToolCalling(): boolean {
+		return this.settings.provider !== 'local' && Boolean(this.settings.apiKey.trim());
+	}
+
 	private getEmbeddingSettings() {
 		return {
 			enabled: this.settings.embeddingEnabled,
@@ -411,6 +484,50 @@ function buildTrace(
 	};
 }
 
+function buildAgentTrace(
+	question: string,
+	results: SearchResult[],
+	toolResults: ToolExecutionResult[],
+	totalMs: number,
+	warnings: string[],
+): ResponseTrace {
+	const searchQueries = Array.from(
+		new Set(toolResults.flatMap((result) => result.searchQueries ?? [])),
+	);
+	return {
+		originalQuestion: question,
+		rewrittenQuery: searchQueries.join('\n') || question,
+		rewriteMethod: 'agent-tool',
+		retrievalMode: RETRIEVAL_MODE_LABEL,
+		sourceCount: results.length,
+		sources: results.map((result) => ({
+			title: result.file.basename,
+			path: result.file.path,
+			score: result.score,
+			excerpt: result.excerpt,
+			section: result.chunk?.headingPath.join(' > ') || result.chunk?.title,
+			lines: result.chunk ? `${result.chunk.startLine}-${result.chunk.endLine}` : undefined,
+			matches: result.matches,
+		})),
+		toolCalls: toolResults.map((result) => ({
+			name: result.call.name,
+			ok: result.ok,
+			input: summarizeToolInput(result.call.input),
+			summary: summarizeToolOutput(result),
+			durationMs: result.durationMs,
+			error: result.error,
+		})),
+		confidenceSummary: summarizeRetrievalConfidence(results),
+		modelProcess: [],
+		timings: {
+			understandingMs: 0,
+			retrievalMs: toolResults.reduce((sum, result) => sum + result.durationMs, 0),
+			totalMs,
+		},
+		warnings,
+	};
+}
+
 function summarizeRetrievalConfidence(results: SearchResult[]): string {
 	if (results.length === 0) {
 		return 'No reliable vault evidence found.';
@@ -440,6 +557,27 @@ function addModelProcess(trace: ResponseTrace, process: string[]): ResponseTrace
 		...trace,
 		modelProcess: [...trace.modelProcess, ...process],
 	};
+}
+
+function summarizeToolInput(input: unknown): string {
+	if (typeof input === 'string') {
+		return input;
+	}
+	try {
+		return JSON.stringify(input);
+	} catch {
+		return String(input);
+	}
+}
+
+function summarizeToolOutput(result: ToolExecutionResult): string {
+	if (!result.ok) {
+		return result.error ?? 'Tool failed';
+	}
+	if (result.results) {
+		return `Returned ${result.results.length} result${result.results.length === 1 ? '' : 's'}`;
+	}
+	return 'Completed';
 }
 
 function cleanAnswerForDisplay(answer: string, reasoning: string): { answer: string; process: string[] } {
