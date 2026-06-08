@@ -246,6 +246,36 @@ export async function completeChatWithTools(
 	};
 }
 
+export async function completeChatStream(
+	options: ChatClientOptions,
+	messages: ChatMessage[],
+	onEvent: (event: RemoteStreamEvent) => void,
+): Promise<RemoteModelAnswer> {
+	const { endpoint, model } = await resolveChatTarget(options);
+	const response = await window.fetch(endpoint, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${options.settings.apiKey.trim()}`,
+		},
+		body: JSON.stringify({
+			model,
+			messages,
+			temperature: 0.2,
+			stream: true,
+		}),
+	});
+
+	if (!response.ok) {
+		throw new Error(`HTTP ${response.status}: ${(await response.text()).slice(0, 240)}`);
+	}
+	if (!response.body) {
+		throw new Error('Streaming response body is empty.');
+	}
+
+	return readStreamingChatResponse(response.body, onEvent);
+}
+
 export async function callRemoteModelStream(
 	options: ChatClientOptions,
 	question: string,
@@ -271,7 +301,14 @@ export async function callRemoteModelStream(
 		throw new Error('Streaming response body is empty.');
 	}
 
-	const reader = response.body.getReader();
+	return readStreamingChatResponse(response.body, onEvent);
+}
+
+async function readStreamingChatResponse(
+	body: ReadableStream<Uint8Array>,
+	onEvent: (event: RemoteStreamEvent) => void,
+): Promise<RemoteModelAnswer> {
+	const reader = body.getReader();
 	const decoder = new TextDecoder();
 	let buffer = '';
 	let answer = '';

@@ -54,6 +54,7 @@ export interface AgentRunRequest {
 	question: string;
 	maxSteps?: number;
 	onStatus?: (label: string) => void;
+	onAnswerDelta?: (delta: string) => void;
 }
 
 export interface AgentRunResult {
