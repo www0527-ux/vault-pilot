@@ -1,6 +1,6 @@
 import { SearchResult } from '../rag/types';
 import { ChatClientOptions } from '../llm/chat';
-import { ChatMessage, completeChatStream, completeChatWithTools } from '../llm/chat';
+import { ChatMessage, completeChatWithTools } from '../llm/chat';
 import { ToolContext, AgentRunRequest, AgentRunResult, ToolExecutionResult } from './types';
 import { ToolExecutor } from './tool-executor';
 import { ToolRegistry } from './tool-registry';
@@ -28,6 +28,7 @@ export class AgentRunner {
 			request.onStatus?.(step === 0 ? 'Choosing tools' : 'Reviewing tool results');
 			const response = await completeChatWithTools(this.chatOptions, messages, this.registry.listDefinitions());
 			if (response.toolCalls.length === 0) {
+				request.onStatus?.('Writing answer');
 				return {
 					answer: response.answer || 'I could not produce an answer from the available tool results.',
 					results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
@@ -58,20 +59,6 @@ export class AgentRunner {
 					content: JSON.stringify(toModelToolOutput(result)),
 				});
 			}
-
-			request.onStatus?.('Writing answer');
-			const final = await completeChatStream(this.chatOptions, messages, (event) => {
-				if (event.type === 'answer') {
-					request.onAnswerDelta?.(event.delta);
-				}
-			});
-			return {
-				answer: final.answer || 'I could not produce an answer from the available tool results.',
-				results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
-				toolResults,
-				durationMs: Date.now() - startedAt,
-				warnings: [],
-			};
 		}
 
 		return {

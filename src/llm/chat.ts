@@ -237,9 +237,13 @@ export async function completeChatWithTools(
 	if (!message) {
 		throw new Error('Tool chat returned no message.');
 	}
+	const content = message.content?.trim() ?? '';
 	const rawToolCalls = message.tool_calls ?? [];
+	if (rawToolCalls.length === 0 && looksLikeTextToolCall(content)) {
+		throw new Error('The model returned tool-call markup as text instead of structured tool_calls.');
+	}
 	return {
-		answer: message.content?.trim() ?? '',
+		answer: content,
 		reasoning: message.reasoning_content?.trim() ?? '',
 		rawToolCalls,
 		toolCalls: rawToolCalls.map(parseToolCall),
@@ -445,6 +449,11 @@ function parseToolArguments(args: string): unknown {
 	} catch {
 		return { raw: args };
 	}
+}
+
+function looksLikeTextToolCall(content: string): boolean {
+	const normalized = content.toLowerCase();
+	return normalized.includes('tool_calls') || normalized.includes('invoke name=') || normalized.includes('dsml');
 }
 
 function parseStreamPart(
