@@ -228,6 +228,7 @@ export class VaultPilotView extends ItemView {
 	} {
 		message.empty();
 		const status = message.createEl('details', { cls: 'vaultpilot-process-summary is-working' });
+		status.open = false;
 		const summary = status.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
 		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
@@ -286,6 +287,7 @@ export class VaultPilotView extends ItemView {
 
 	private renderProcessSummary(message: HTMLElement, answer: AgentAnswer) {
 		const details = message.createEl('details', { cls: 'vaultpilot-process-summary' });
+		details.open = false;
 		const summary = details.createEl('summary');
 		const hasWarning = answer.trace.warnings.length > 0;
 		summary.createSpan({
@@ -400,6 +402,7 @@ export class VaultPilotView extends ItemView {
 
 	private renderDebugDetails(container: HTMLElement, answer: AgentAnswer) {
 		const debug = container.createEl('details', { cls: 'vaultpilot-debug-details' });
+		debug.open = false;
 		const summary = debug.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-debug-title', text: 'Debug details' });
 
