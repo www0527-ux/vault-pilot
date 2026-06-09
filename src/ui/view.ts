@@ -93,28 +93,24 @@ export class VaultPilotView extends ItemView {
 		const live = this.renderLiveAnswerShell(loading);
 		let liveAnswer = '';
 		let liveProcess = '';
+		const activeToolRows = new Map<string, HTMLElement[]>();
 
 		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
 			if (event.type === 'status') {
-				this.updateLiveStatus(live.statusTitle, event.label);
-				if (event.label === 'Preparing answer') {
-					this.appendLiveTimelineEvent(live.timelineEl, 'thinking', event.label, '');
+				const title = userFacingStatus(event.label);
+				this.updateLiveStatus(live.statusTitle, title);
+				if (event.label === 'Writing answer' || event.label === 'Preparing answer') {
+					this.appendLiveTimelineEvent(live.timelineEl, 'running', title, '');
 				}
 				this.scrollMessagesToBottom();
 				return;
 			}
 			if (event.type === 'step_start') {
-				this.appendLiveTimelineEvent(live.timelineEl, 'thinking', `Step ${event.step}: ${event.label}`, '');
+				this.updateLiveStatus(live.statusTitle, userFacingStatus(event.label));
 				this.scrollMessagesToBottom();
 				return;
 			}
 			if (event.type === 'step_finish') {
-				this.appendLiveTimelineEvent(
-					live.timelineEl,
-					'done',
-					`Step ${event.step}: ${event.label}`,
-					formatElapsed(event.durationMs),
-				);
 				this.scrollMessagesToBottom();
 				return;
 			}
@@ -122,9 +118,10 @@ export class VaultPilotView extends ItemView {
 				this.appendLiveTimelineEvent(
 					live.timelineEl,
 					'error',
-					`Step ${event.step}: ${event.label}`,
+					userFacingStatus(event.label),
 					`${event.error} (${formatElapsed(event.durationMs)})`,
 				);
+				this.updateLiveStatus(live.statusTitle, 'Stopped');
 				this.scrollMessagesToBottom();
 				return;
 			}
@@ -135,21 +132,38 @@ export class VaultPilotView extends ItemView {
 				return;
 			}
 			if (event.type === 'tool_start') {
-				this.appendLiveTimelineEvent(
+				const title = buildToolActivityTitle(event.name, event.inputSummary);
+				this.updateLiveStatus(live.statusTitle, title);
+				const row = this.appendLiveTimelineEvent(
 					live.timelineEl,
-					'tool',
-					`Using ${formatToolName(event.name)}`,
-					event.inputSummary,
+					'running',
+					title,
+					buildToolActivityDetail(event.name, event.inputSummary),
 				);
+				const rows = activeToolRows.get(event.name) ?? [];
+				rows.push(row);
+				activeToolRows.set(event.name, rows);
 				this.scrollMessagesToBottom();
 				return;
 			}
 			if (event.type === 'tool_result') {
-				this.appendLiveTimelineEvent(
-					live.timelineEl,
-					event.ok ? 'done' : 'error',
-					`${formatToolName(event.name)} ${event.ok ? 'finished' : 'failed'} (${formatElapsed(event.durationMs)})`,
-					event.error ?? event.summary,
+				const rows = activeToolRows.get(event.name) ?? [];
+				const row = rows.shift();
+				if (rows.length === 0) {
+					activeToolRows.delete(event.name);
+				} else {
+					activeToolRows.set(event.name, rows);
+				}
+				const title = buildToolResultTitle(event.name, event.ok);
+				const detail = `${event.error ?? event.summary}${event.summary || event.error ? '\n' : ''}${formatElapsed(event.durationMs)}`;
+				if (row) {
+					this.updateLiveTimelineEvent(row, event.ok ? 'done' : 'error', title, detail);
+				} else {
+					this.appendLiveTimelineEvent(live.timelineEl, event.ok ? 'done' : 'error', title, detail);
+				}
+				this.updateLiveStatus(
+					live.statusTitle,
+					event.ok ? `${formatToolName(event.name)} complete` : `${formatToolName(event.name)} failed`,
 				);
 				this.scrollMessagesToBottom();
 				return;
@@ -213,12 +227,8 @@ export class VaultPilotView extends ItemView {
 		const summary = status.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
 		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
-		const steps = status.createDiv({ cls: 'vaultpilot-process-steps' });
-		steps.createSpan({ text: 'Understand question' });
-		steps.createSpan({ text: 'Search notes' });
-		steps.createSpan({ text: 'Prepare answer' });
 		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
-		this.appendLiveTimelineEvent(timelineEl, 'thinking', 'Understanding question', '');
+		this.appendLiveTimelineEvent(timelineEl, 'running', 'Understanding question', '');
 		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
 		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
 		return { statusTitle, timelineEl, processEl, answerEl };
@@ -228,13 +238,38 @@ export class VaultPilotView extends ItemView {
 		statusTitle.setText(label);
 	}
 
-	private appendLiveTimelineEvent(container: HTMLElement, kind: 'thinking' | 'tool' | 'done' | 'error', title: string, detail: string) {
+	private appendLiveTimelineEvent(container: HTMLElement, kind: 'running' | 'done' | 'error', title: string, detail: string): HTMLElement {
 		const row = container.createDiv({ cls: `vaultpilot-live-step vaultpilot-live-step-${kind}` });
 		row.createSpan({ cls: 'vaultpilot-live-step-dot' });
 		const body = row.createDiv({ cls: 'vaultpilot-live-step-body' });
 		body.createDiv({ cls: 'vaultpilot-live-step-title', text: title });
 		if (detail.trim()) {
 			body.createDiv({ cls: 'vaultpilot-live-step-detail', text: detail.trim() });
+		}
+		return row;
+	}
+
+	private updateLiveTimelineEvent(row: HTMLElement, kind: 'done' | 'error', title: string, detail: string) {
+		row.removeClass('vaultpilot-live-step-running');
+		row.removeClass('vaultpilot-live-step-done');
+		row.removeClass('vaultpilot-live-step-error');
+		row.addClass(`vaultpilot-live-step-${kind}`);
+		const titleEl = row.querySelector('.vaultpilot-live-step-title');
+		if (titleEl instanceof HTMLElement) {
+			titleEl.setText(title);
+		}
+		const body = row.querySelector('.vaultpilot-live-step-body');
+		if (!(body instanceof HTMLElement)) {
+			return;
+		}
+		let detailEl = row.querySelector('.vaultpilot-live-step-detail');
+		if (detail.trim()) {
+			if (!(detailEl instanceof HTMLElement)) {
+				detailEl = body.createDiv({ cls: 'vaultpilot-live-step-detail' });
+			}
+			detailEl.setText(detail.trim());
+		} else if (detailEl instanceof HTMLElement) {
+			detailEl.remove();
 		}
 	}
 
@@ -430,6 +465,95 @@ function formatToolCall(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>
 		lines.push(`Error: ${toolCall.error}`);
 	}
 	return lines.join('\n');
+}
+
+function userFacingStatus(label: string): string {
+	if (label === 'Choosing tools') {
+		return 'Choosing what to inspect';
+	}
+	if (label === 'Reviewing tool results') {
+		return 'Reviewing what was found';
+	}
+	if (label === 'Writing answer') {
+		return 'Writing answer';
+	}
+	if (label === 'Preparing answer') {
+		return 'Preparing answer';
+	}
+	if (label.startsWith('Running ')) {
+		return buildToolActivityTitle(label.replace(/^Running\s+/u, ''), '');
+	}
+	if (label === 'Stopped after tool limit') {
+		return 'Stopped';
+	}
+	return label;
+}
+
+function buildToolActivityTitle(name: string, inputSummary: string): string {
+	if (name === 'search_notes') {
+		return 'Searching notes';
+	}
+	if (name === 'read_note') {
+		return inputSummary ? `Reading ${shortenPath(inputSummary)}` : 'Reading note';
+	}
+	if (name === 'inspect_folder') {
+		return inputSummary ? `Inspecting ${shortenPath(inputSummary)}` : 'Inspecting folder';
+	}
+	if (name === 'classify_folder_files') {
+		return inputSummary ? `Classifying ${inputSummary}` : 'Classifying files';
+	}
+	if (name === 'get_current_note') {
+		return 'Reading current note';
+	}
+	if (name === 'suggest_links') {
+		return 'Finding related notes';
+	}
+	return `Using ${formatToolName(name)}`;
+}
+
+function buildToolActivityDetail(name: string, inputSummary: string): string {
+	if (!inputSummary) {
+		return '';
+	}
+	if (name === 'classify_folder_files') {
+		return inputSummary;
+	}
+	if (name === 'search_notes') {
+		return `Query: ${inputSummary}`;
+	}
+	return inputSummary;
+}
+
+function buildToolResultTitle(name: string, ok: boolean): string {
+	const action = ok ? 'Finished' : 'Failed';
+	if (name === 'search_notes') {
+		return ok ? 'Finished searching notes' : 'Search failed';
+	}
+	if (name === 'read_note') {
+		return ok ? 'Finished reading note' : 'Could not read note';
+	}
+	if (name === 'inspect_folder') {
+		return ok ? 'Finished inspecting folder' : 'Folder inspection failed';
+	}
+	if (name === 'classify_folder_files') {
+		return ok ? 'Finished classifying files' : 'File classification failed';
+	}
+	if (name === 'get_current_note') {
+		return ok ? 'Finished reading current note' : 'Could not read current note';
+	}
+	if (name === 'suggest_links') {
+		return ok ? 'Finished finding related notes' : 'Could not find related notes';
+	}
+	return `${action} ${formatToolName(name)}`;
+}
+
+function shortenPath(value: string): string {
+	const [pathPart] = value.split(',');
+	const path = pathPart?.trim() ?? value;
+	if (path.length <= 48) {
+		return path;
+	}
+	return `...${path.slice(-45)}`;
 }
 
 function formatToolName(name: string): string {
