@@ -139,6 +139,7 @@ function buildSystemPrompt(): string {
 		'Do not keep calling tools just to exhaustively inspect every candidate. Once the evidence is enough to answer, stop using tools and write the answer.',
 		'For broad project or documentation-summary questions, summarize the main themes from representative search results and only read specific notes when excerpts are not enough.',
 		'For folder-level questions, call inspect_folder first. Do not use repeated read_note calls to scan a folder.',
+		'For category-count questions inside a folder, call classify_folder_files. Do not estimate semantic category counts from inspect_folder alone.',
 		'Do not claim a rewritten query or search plan is vault evidence.',
 	].join('\n');
 }
@@ -206,6 +207,11 @@ function summarizeToolInput(name: string, input: unknown): string {
 			: '';
 		return `${path || 'vault root'}${maxFiles}`;
 	}
+	if (name === 'classify_folder_files') {
+		const path = typeof input.path === 'string' ? input.path.trim() : '';
+		const category = typeof input.category === 'string' ? input.category.trim() : '';
+		return `${path || 'vault root'}: ${category}`;
+	}
 	return '';
 }
 
@@ -223,6 +229,12 @@ function summarizeToolResult(result: ToolExecutionResult): string {
 		const chunkCount = typeof result.output.chunkCount === 'number' ? result.output.chunkCount : 0;
 		const returnedFileCount = typeof result.output.returnedFileCount === 'number' ? result.output.returnedFileCount : 0;
 		return `Inspected ${fileCount} file${fileCount === 1 ? '' : 's'} and ${chunkCount} chunk${chunkCount === 1 ? '' : 's'}; returned ${returnedFileCount} file summaries`;
+	}
+	if (result.call.name === 'classify_folder_files' && isRecord(result.output)) {
+		const totalFiles = typeof result.output.totalFiles === 'number' ? result.output.totalFiles : 0;
+		const matchedFileCount = typeof result.output.matchedFileCount === 'number' ? result.output.matchedFileCount : 0;
+		const uncertainFileCount = typeof result.output.uncertainFileCount === 'number' ? result.output.uncertainFileCount : 0;
+		return `Classified ${totalFiles} file${totalFiles === 1 ? '' : 's'}; matched ${matchedFileCount}, uncertain ${uncertainFileCount}`;
 	}
 	if (result.call.name === 'read_note' && isRecord(result.output)) {
 		const path = typeof result.output.path === 'string' ? result.output.path : '';

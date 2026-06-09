@@ -17,10 +17,19 @@ interface InspectFolderInput {
 	maxExcerptsPerFile?: number;
 }
 
+interface ClassifyFolderFilesInput {
+	path?: string;
+	category?: string;
+	keywords?: string[];
+	maxFiles?: number;
+	includeUncertain?: boolean;
+}
+
 export function createDefaultTools(): AgentTool<unknown, unknown>[] {
 	return [
 		getCurrentNoteTool,
 		inspectFolderTool,
+		classifyFolderFilesTool,
 		readNoteTool,
 		searchNotesTool,
 		suggestLinksTool,
@@ -99,6 +108,57 @@ const inspectFolderTool: AgentTool<InspectFolderInput, unknown> = {
 			maxFiles: input.maxFiles,
 			maxHeadingsPerFile: input.maxHeadingsPerFile,
 			maxExcerptsPerFile: input.maxExcerptsPerFile,
+		});
+	},
+};
+
+const classifyFolderFilesTool: AgentTool<ClassifyFolderFilesInput, unknown> = {
+	name: 'classify_folder_files',
+	description: [
+		'Classify Markdown files in a folder against a semantic category using indexed file profiles.',
+		'Use this for questions asking how many files or articles belong to a category.',
+		'Returns deterministic lexical matches, uncertain matches, counts, and evidence. Do not estimate category counts from inspect_folder alone.',
+	].join(' '),
+	risk: 'read',
+	schema: {
+		type: 'object',
+		properties: {
+			path: {
+				type: 'string',
+				description: 'Vault-relative folder path. Use an empty string for the vault root.',
+			},
+			category: {
+				type: 'string',
+				description: 'The category to count or classify, such as RAG-related notes or failure reviews.',
+			},
+			keywords: {
+				type: 'array',
+				description: 'Optional explicit keywords that indicate the category.',
+				items: { type: 'string' },
+			},
+			maxFiles: {
+				type: 'number',
+				description: 'Maximum matched and uncertain file records to return.',
+			},
+			includeUncertain: {
+				type: 'boolean',
+				description: 'Whether to return borderline matches separately.',
+			},
+		},
+		required: ['path', 'category'],
+		additionalProperties: false,
+	},
+	async execute(input: ClassifyFolderFilesInput, context: ToolContext) {
+		const category = input.category?.trim();
+		if (!category) {
+			throw new Error('classify_folder_files requires category.');
+		}
+		return context.retrieval.classifyFolderFiles({
+			path: input.path?.trim() ?? '',
+			category,
+			keywords: input.keywords,
+			maxFiles: input.maxFiles,
+			includeUncertain: input.includeUncertain,
 		});
 	},
 };

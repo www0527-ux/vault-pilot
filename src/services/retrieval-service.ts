@@ -1,5 +1,11 @@
 import { TFile } from 'obsidian';
-import { FolderInspection, FolderInspectionOptions, SearchResult } from '../rag/types';
+import {
+	FolderClassification,
+	FolderClassificationOptions,
+	FolderInspection,
+	FolderInspectionOptions,
+	SearchResult,
+} from '../rag/types';
 import type VaultPilotPlugin from '../main';
 
 export interface RetrievalSearchInput {
@@ -26,6 +32,10 @@ export class RetrievalService {
 
 	async inspectFolder(options: FolderInspectionOptions): Promise<FolderInspection> {
 		return this.plugin.inspectFolder(options);
+	}
+
+	async classifyFolderFiles(options: FolderClassificationOptions): Promise<FolderClassification> {
+		return this.plugin.classifyFolderFiles(options);
 	}
 }
 

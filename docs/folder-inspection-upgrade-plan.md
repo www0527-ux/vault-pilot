@@ -89,8 +89,58 @@ For folder-level questions:
 - Keep output compact and deterministic.
 - Do not include raw full-file contents in tool output.
 
+## Category Counting Extension
+
+Folder overview is not enough for questions like:
+
+```text
+How many files in this folder are RAG-related?
+How many notes are failure reviews?
+How many articles are learning notes?
+```
+
+These are semantic category-count questions. The agent should not estimate counts from `inspect_folder` output alone.
+
+Add a second tool:
+
+```text
+classify_folder_files
+```
+
+Input:
+
+```ts
+{
+	path: string;
+	category: string;
+	keywords?: string[];
+	maxFiles?: number;
+	includeUncertain?: boolean;
+}
+```
+
+V1 behavior:
+
+- Build deterministic file profiles from indexed chunks.
+- Score path, basename, headings, excerpts, and chunk content against category tokens.
+- Return exact folder file count from the index.
+- Return matched files, uncertain files, scores, and evidence.
+
+V1 intentionally uses lexical evidence only. This keeps the count traceable and cheap. Future versions can add embedding similarity or LLM review for uncertain files.
+
+Recommended pipeline:
+
+```text
+inventory from index
+-> lexical category classification
+-> optional embedding similarity
+-> optional LLM review for uncertain files
+-> answer with matched count, uncertain count, and evidence
+```
+
 ## Follow-Up
 
 - Add per-run `read_note` de-duplication in `AgentRunner`.
 - Consider a future persistent file/folder summary cache if folder summaries become expensive or commonly repeated.
 - Consider Markdown-specific signals such as frontmatter tags, wiki links, and folder-level heading frequencies.
+- Add embedding-based category scoring and LLM review for uncertain classification results.

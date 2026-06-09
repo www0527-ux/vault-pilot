@@ -9,7 +9,15 @@ import {
 	embeddingTextForChunk,
 	hashEmbeddingText,
 } from './embeddings';
-import { FolderInspection, FolderInspectionOptions, NoteChunk, SearchResult } from './types';
+import {
+	ClassifiedFolderFile,
+	FolderClassification,
+	FolderClassificationOptions,
+	FolderInspection,
+	FolderInspectionOptions,
+	NoteChunk,
+	SearchResult,
+} from './types';
 import { tokenize } from './text';
 
 const CACHE_VERSION = 2;
@@ -25,6 +33,9 @@ const EXCLUDED_MARKDOWN_PATH_PREFIXES = ['_rag_eval/'];
 const DEFAULT_FOLDER_MAX_FILES = 60;
 const DEFAULT_FOLDER_MAX_HEADINGS_PER_FILE = 8;
 const DEFAULT_FOLDER_MAX_EXCERPTS_PER_FILE = 2;
+const DEFAULT_CLASSIFICATION_MAX_FILES = 80;
+const CLASSIFICATION_MATCH_THRESHOLD = 0.5;
+const CLASSIFICATION_UNCERTAIN_THRESHOLD = 0.25;
 
 export interface IndexStats {
 	status: 'empty' | 'loading' | 'building' | 'ready';
@@ -177,6 +188,41 @@ export class IndexManager {
 			topSubfolders: topSubfolders(files.map((file) => file.path), folderPath),
 			topHeadings: topHeadings(chunks),
 			files: sortedFiles.slice(0, maxFiles),
+		};
+	}
+
+	async classifyFolderFiles(options: FolderClassificationOptions): Promise<FolderClassification> {
+		const index = await this.getIndex();
+		const folderPath = normalizeFolderPath(options.path);
+		const category = options.category.trim();
+		const tokens = classificationTokens(category, options.keywords ?? []);
+		const maxFiles = clampPositiveInteger(options.maxFiles, DEFAULT_CLASSIFICATION_MAX_FILES, 200);
+		const chunks = index.chunks.filter((chunk) => isChunkInFolder(chunk, folderPath));
+		const profiles = buildClassificationProfiles(chunks);
+
+		const classified = profiles
+			.map((profile) => scoreClassificationProfile(profile, tokens, category))
+			.sort((a, b) => b.score - a.score || a.path.localeCompare(b.path));
+		const matched = classified.filter((file) => file.score >= CLASSIFICATION_MATCH_THRESHOLD);
+		const uncertain = options.includeUncertain === false
+			? []
+			: classified.filter((file) => file.score >= CLASSIFICATION_UNCERTAIN_THRESHOLD && file.score < CLASSIFICATION_MATCH_THRESHOLD);
+		const returnedMatched = matched.slice(0, maxFiles);
+		const remainingSlots = Math.max(0, maxFiles - returnedMatched.length);
+		const returnedUncertain = uncertain.slice(0, remainingSlots);
+
+		return {
+			path: folderPath,
+			category,
+			method: 'lexical',
+			totalFiles: profiles.length,
+			matchedFileCount: matched.length,
+			uncertainFileCount: uncertain.length,
+			returnedMatchedFileCount: returnedMatched.length,
+			returnedUncertainFileCount: returnedUncertain.length,
+			truncated: matched.length + uncertain.length > returnedMatched.length + returnedUncertain.length,
+			matchedFiles: returnedMatched,
+			uncertainFiles: returnedUncertain,
 		};
 	}
 
@@ -726,6 +772,157 @@ function clampPositiveInteger(value: number | undefined, fallback: number, max: 
 	}
 	return Math.max(1, Math.min(Math.round(value), max));
 }
+
+interface ClassificationProfile {
+	path: string;
+	basename: string;
+	pathText: string;
+	headingText: string;
+	excerptText: string;
+	contentText: string;
+}
+
+function classificationTokens(category: string, keywords: string[]): string[] {
+	return Array.from(new Set(tokenize([category, ...keywords].join(' '))))
+		.filter((token) => !CLASSIFICATION_STOP_WORDS.has(token))
+		.slice(0, 24);
+}
+
+function buildClassificationProfiles(chunks: NoteChunk[]): ClassificationProfile[] {
+	const byFile = new Map<string, {
+		path: string;
+		basename: string;
+		headings: string[];
+		excerpts: string[];
+		contents: string[];
+	}>();
+
+	for (const chunk of chunks) {
+		const entry = byFile.get(chunk.file.path) ?? {
+			path: chunk.file.path,
+			basename: chunk.file.basename,
+			headings: [],
+			excerpts: [],
+			contents: [],
+		};
+		for (const heading of chunk.headingPath) {
+			if (heading && !entry.headings.includes(heading)) {
+				entry.headings.push(heading);
+			}
+		}
+		const excerpt = firstContentLine(chunk.content);
+		if (excerpt && entry.excerpts.length < 4 && !entry.excerpts.includes(excerpt)) {
+			entry.excerpts.push(excerpt);
+		}
+		if (entry.contents.length < 8) {
+			entry.contents.push(chunk.content);
+		}
+		byFile.set(chunk.file.path, entry);
+	}
+
+	return Array.from(byFile.values()).map((entry) => ({
+		path: entry.path,
+		basename: entry.basename,
+		pathText: normalizeClassificationText(`${entry.path} ${entry.basename}`),
+		headingText: normalizeClassificationText(entry.headings.join(' ')),
+		excerptText: normalizeClassificationText(entry.excerpts.join(' ')),
+		contentText: normalizeClassificationText(entry.contents.join(' ')),
+	}));
+}
+
+function scoreClassificationProfile(
+	profile: ClassificationProfile,
+	tokens: string[],
+	category: string,
+): ClassifiedFolderFile {
+	if (tokens.length === 0) {
+		return {
+			path: profile.path,
+			basename: profile.basename,
+			score: 0,
+			evidence: [],
+		};
+	}
+
+	const evidence: string[] = [];
+	let score = 0;
+	const categoryText = normalizeClassificationText(category);
+	if (categoryText.length > 0 && profile.contentText.includes(categoryText)) {
+		score += 0.4;
+		evidence.push(`content contains "${category}"`);
+	}
+
+	for (const token of tokens) {
+		const match = bestClassificationMatch(profile, token);
+		if (!match) {
+			continue;
+		}
+		score += match.weight;
+		if (evidence.length < 6) {
+			evidence.push(`${match.field} matches "${token}"`);
+		}
+	}
+
+	return {
+		path: profile.path,
+		basename: profile.basename,
+		score: roundScore(Math.min(score / tokens.length, 1)),
+		evidence,
+	};
+}
+
+function bestClassificationMatch(
+	profile: ClassificationProfile,
+	token: string,
+): { field: string; weight: number } | null {
+	if (profile.pathText.includes(token)) {
+		return { field: 'path', weight: 1.2 };
+	}
+	if (profile.headingText.includes(token)) {
+		return { field: 'heading', weight: 1 };
+	}
+	if (profile.excerptText.includes(token)) {
+		return { field: 'excerpt', weight: 0.8 };
+	}
+	if (profile.contentText.includes(token)) {
+		return { field: 'content', weight: 0.6 };
+	}
+	return null;
+}
+
+function normalizeClassificationText(value: string): string {
+	return value
+		.toLowerCase()
+		.replace(/([a-z0-9_-])([\u3400-\u9fff])/gu, '$1 $2')
+		.replace(/([\u3400-\u9fff])([a-z0-9_-])/gu, '$1 $2')
+		.replace(/[^\p{L}\p{N}\s_-]+/gu, ' ')
+		.replace(/\s+/gu, ' ')
+		.trim();
+}
+
+const CLASSIFICATION_STOP_WORDS = new Set([
+	'article',
+	'articles',
+	'category',
+	'count',
+	'file',
+	'files',
+	'note',
+	'notes',
+	'related',
+	'type',
+	'types',
+	'多少',
+	'文章',
+	'文件',
+	'文档',
+	'类别',
+	'类型',
+	'相关',
+	'笔记',
+	'属于',
+	'数量',
+]);
 
 function hasLexicalEvidence(result: SearchResult & { bm25Score?: number; embeddingScore?: number }): boolean {
 	return (result.bm25Score ?? 0) > 0 || result.matches.some((match) => match !== 'semantic');

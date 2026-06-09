@@ -18,6 +18,8 @@ import { suggestLinks } from './rag/search';
 import {
 	AgentAnswer,
 	AgentStreamEvent,
+	FolderClassification,
+	FolderClassificationOptions,
 	FolderInspection,
 	FolderInspectionOptions,
 	PreparedQuestion,
@@ -144,6 +146,10 @@ export default class VaultPilotPlugin extends Plugin {
 
 	async inspectFolder(options: FolderInspectionOptions): Promise<FolderInspection> {
 		return this.indexManager.inspectFolder(options);
+	}
+
+	async classifyFolderFiles(options: FolderClassificationOptions): Promise<FolderClassification> {
+		return this.indexManager.classifyFolderFiles(options);
 	}
 
 	async answerQuestion(question: string): Promise<AgentAnswer> {
@@ -586,6 +592,12 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 		const fileCount = typeof result.output.fileCount === 'number' ? result.output.fileCount : 0;
 		const chunkCount = typeof result.output.chunkCount === 'number' ? result.output.chunkCount : 0;
 		return `Inspected ${fileCount} file${fileCount === 1 ? '' : 's'} and ${chunkCount} chunk${chunkCount === 1 ? '' : 's'}`;
+	}
+	if (result.call.name === 'classify_folder_files' && isRecord(result.output)) {
+		const totalFiles = typeof result.output.totalFiles === 'number' ? result.output.totalFiles : 0;
+		const matchedFileCount = typeof result.output.matchedFileCount === 'number' ? result.output.matchedFileCount : 0;
+		const uncertainFileCount = typeof result.output.uncertainFileCount === 'number' ? result.output.uncertainFileCount : 0;
+		return `Classified ${totalFiles} file${totalFiles === 1 ? '' : 's'}; matched ${matchedFileCount}, uncertain ${uncertainFileCount}`;
 	}
 	if (result.results) {
 		return `Returned ${result.results.length} result${result.results.length === 1 ? '' : 's'}`;

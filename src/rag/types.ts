@@ -49,6 +49,35 @@ export interface FolderInspection {
 	}>;
 }
 
+export interface FolderClassificationOptions {
+	path: string;
+	category: string;
+	keywords?: string[];
+	maxFiles?: number;
+	includeUncertain?: boolean;
+}
+
+export interface FolderClassification {
+	path: string;
+	category: string;
+	method: 'lexical';
+	totalFiles: number;
+	matchedFileCount: number;
+	uncertainFileCount: number;
+	returnedMatchedFileCount: number;
+	returnedUncertainFileCount: number;
+	truncated: boolean;
+	matchedFiles: ClassifiedFolderFile[];
+	uncertainFiles: ClassifiedFolderFile[];
+}
+
+export interface ClassifiedFolderFile {
+	path: string;
+	basename: string;
+	score: number;
+	evidence: string[];
+}
+
 export type QueryRewriteMethod = 'rule-based' | 'remote' | 'agent-tool';
 
 export interface QueryRewrite {
