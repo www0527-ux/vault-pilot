@@ -27,7 +27,10 @@ export interface FolderInspectionOptions {
 }
 
 export interface FolderInspection {
+	requestedPath: string;
 	path: string;
+	pathWarning?: string;
+	suggestedPath?: string;
 	fileCount: number;
 	chunkCount: number;
 	returnedFileCount: number;
@@ -58,7 +61,10 @@ export interface FolderClassificationOptions {
 }
 
 export interface FolderClassification {
+	requestedPath: string;
 	path: string;
+	pathWarning?: string;
+	suggestedPath?: string;
 	category: string;
 	method: 'lexical';
 	totalFiles: number;

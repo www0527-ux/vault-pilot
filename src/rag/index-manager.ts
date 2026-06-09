@@ -157,7 +157,9 @@ export class IndexManager {
 
 	async inspectFolder(options: FolderInspectionOptions): Promise<FolderInspection> {
 		const index = await this.getIndex();
-		const folderPath = normalizeFolderPath(options.path);
+		const requestedPath = options.path;
+		const pathResolution = resolveIndexedFolderPath(requestedPath, index.chunks);
+		const folderPath = pathResolution.path;
 		const maxFiles = clampPositiveInteger(options.maxFiles, DEFAULT_FOLDER_MAX_FILES, 200);
 		const maxHeadingsPerFile = clampPositiveInteger(
 			options.maxHeadingsPerFile,
@@ -180,7 +182,10 @@ export class IndexManager {
 		});
 
 		return {
+			requestedPath,
 			path: folderPath,
+			pathWarning: pathResolution.warning,
+			suggestedPath: pathResolution.suggestedPath,
 			fileCount: files.length,
 			chunkCount: chunks.length,
 			returnedFileCount: Math.min(sortedFiles.length, maxFiles),
@@ -193,7 +198,9 @@ export class IndexManager {
 
 	async classifyFolderFiles(options: FolderClassificationOptions): Promise<FolderClassification> {
 		const index = await this.getIndex();
-		const folderPath = normalizeFolderPath(options.path);
+		const requestedPath = options.path;
+		const pathResolution = resolveIndexedFolderPath(requestedPath, index.chunks);
+		const folderPath = pathResolution.path;
 		const category = options.category.trim();
 		const tokens = classificationTokens(category, options.keywords ?? []);
 		const maxFiles = clampPositiveInteger(options.maxFiles, DEFAULT_CLASSIFICATION_MAX_FILES, 200);
@@ -212,7 +219,10 @@ export class IndexManager {
 		const returnedUncertain = uncertain.slice(0, remainingSlots);
 
 		return {
+			requestedPath,
 			path: folderPath,
+			pathWarning: pathResolution.warning,
+			suggestedPath: pathResolution.suggestedPath,
 			category,
 			method: 'lexical',
 			totalFiles: profiles.length,
@@ -665,8 +675,68 @@ function pruneWeakResults<T extends SearchResult & { queryHits: number }>(result
 		.slice(0, limit);
 }
 
-function normalizeFolderPath(path: string): string {
+interface FolderPathResolution {
+	path: string;
+	warning?: string;
+	suggestedPath?: string;
+}
+
+function resolveIndexedFolderPath(path: string, chunks: NoteChunk[]): FolderPathResolution {
+	const rawNormalized = path.trim().replaceAll('\\', '/').replace(/\/+$/u, '');
+	const normalized = normalizeVaultPath(path);
+	if (!normalized) {
+		return { path: '' };
+	}
+	if (chunks.some((chunk) => isChunkInFolder(chunk, normalized))) {
+		return { path: normalized };
+	}
+
+	const suggestedPath = findFolderSuffixMatch(normalized, chunks);
+	if (suggestedPath) {
+		return {
+			path: suggestedPath,
+			suggestedPath,
+			warning: `Converted absolute or non-vault path to vault-relative path: ${suggestedPath}`,
+		};
+	}
+
+	if (looksLikeAbsolutePath(rawNormalized)) {
+		return {
+			path: normalized,
+			warning: 'No indexed files matched this absolute path. Tools work best with vault-relative paths.',
+		};
+	}
+
+	return { path: normalized };
+}
+
+function normalizeVaultPath(path: string): string {
 	return path.trim().replaceAll('\\', '/').replace(/^\/+/u, '').replace(/\/+$/u, '');
+}
+
+function findFolderSuffixMatch(path: string, chunks: NoteChunk[]): string | undefined {
+	const folders = new Set<string>();
+	for (const chunk of chunks) {
+		for (const folder of parentFolders(chunk.file.path.replaceAll('\\', '/'))) {
+			folders.add(folder);
+		}
+	}
+	return Array.from(folders)
+		.filter((folder) => path === folder || path.endsWith(`/${folder}`))
+		.sort((a, b) => b.length - a.length)[0];
+}
+
+function parentFolders(path: string): string[] {
+	const parts = path.split('/').filter(Boolean);
+	const folders: string[] = [];
+	for (let index = 1; index < parts.length; index += 1) {
+		folders.push(parts.slice(0, index).join('/'));
+	}
+	return folders;
+}
+
+function looksLikeAbsolutePath(path: string): boolean {
+	return /^[a-z]:\//iu.test(path) || path.startsWith('/') || path.startsWith('~/');
 }
 
 function isChunkInFolder(chunk: NoteChunk, folderPath: string): boolean {
