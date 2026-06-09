@@ -223,7 +223,7 @@ export class VaultPilotView extends ItemView {
 		answerEl: HTMLElement;
 	} {
 		message.empty();
-		const status = message.createEl('details', { cls: 'vaultpilot-process-summary is-working', attr: { open: 'true' } });
+		const status = message.createEl('details', { cls: 'vaultpilot-process-summary is-working' });
 		const summary = status.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
 		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
@@ -322,8 +322,14 @@ export class VaultPilotView extends ItemView {
 	}
 
 	private renderSources(message: HTMLElement, results: SearchResult[]) {
-		const section = message.createDiv({ cls: 'vaultpilot-sources' });
-		section.createEl('h3', { text: 'Sources' });
+		const section = message.createEl('details', { cls: 'vaultpilot-sources' });
+		const summary = section.createEl('summary');
+		summary.createSpan({
+			cls: 'vaultpilot-sources-title',
+			text: results.length === 0
+				? 'Sources'
+				: `Sources (${results.length})`,
+		});
 
 		if (results.length === 0) {
 			section.createDiv({ cls: 'vaultpilot-source-empty', text: 'No reliable vault sources were found.' });
