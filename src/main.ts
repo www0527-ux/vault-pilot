@@ -193,9 +193,10 @@ export default class VaultPilotPlugin extends Plugin {
 
 	async streamAnswerQuestion(question: string, onEvent: (event: AgentStreamEvent) => void): Promise<AgentAnswer> {
 		const preludeActiveFile = this.getActiveMarkdownFile();
+		const preludeText = buildAssistantPrelude(question, preludeActiveFile, this.settings.includeCurrentNote);
 		onEvent({
 			type: 'assistant_prelude',
-			text: buildAssistantPrelude(question, preludeActiveFile, this.settings.includeCurrentNote),
+			text: preludeText,
 		});
 
 		if (this.settings.provider === 'local') {
@@ -205,19 +206,20 @@ export default class VaultPilotPlugin extends Plugin {
 				answer: buildLocalAnswer(question, results, activeFile),
 				results,
 				mode: 'local',
-				trace,
+				trace: addModelProcess(trace, [preludeText]),
 			};
 		}
 
 		if (!this.settings.apiKey.trim()) {
 			const { activeFile, results, trace } = await this.prepareQuestion(question);
-			return this.missingApiKeyAnswer(question, activeFile, results, trace);
+			return this.missingApiKeyAnswer(question, activeFile, results, addModelProcess(trace, [preludeText]));
 		}
 
 		if (this.canUseToolCalling()) {
 			try {
 				onEvent({ type: 'status', label: 'Choosing tools' });
-				return await this.answerQuestionWithTools(question, onEvent);
+				const answer = await this.answerQuestionWithTools(question, onEvent);
+				return { ...answer, trace: addModelProcess(answer.trace, [preludeText]) };
 			} catch (error) {
 				console.error(error);
 				new Notice('VaultPilot tool calling failed. Falling back to fixed RAG.');
@@ -225,7 +227,9 @@ export default class VaultPilotPlugin extends Plugin {
 			}
 		}
 
-		const { activeFile, activeContent, results, trace } = await this.prepareQuestion(question);
+		const prepared = await this.prepareQuestion(question);
+		const { activeFile, activeContent, results } = prepared;
+		const trace = addModelProcess(prepared.trace, [preludeText]);
 		onEvent({ type: 'status', label: 'Preparing answer' });
 
 		try {

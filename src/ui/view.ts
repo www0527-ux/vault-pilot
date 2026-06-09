@@ -97,7 +97,8 @@ export class VaultPilotView extends ItemView {
 
 		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
 			if (event.type === 'assistant_prelude') {
-				this.updateLivePrelude(live.preludeEl, event.text);
+				liveProcess += event.text;
+				this.updateLiveProcess(live.processEl, liveProcess);
 				this.updateLiveStatus(live.statusTitle, 'Getting oriented');
 				this.scrollMessagesToBottom();
 				return;
@@ -221,7 +222,6 @@ export class VaultPilotView extends ItemView {
 
 	private renderLiveAnswerShell(message: HTMLElement): {
 		statusTitle: HTMLElement;
-		preludeEl: HTMLElement;
 		timelineEl: HTMLElement;
 		processEl: HTMLElement;
 		answerEl: HTMLElement;
@@ -231,19 +231,14 @@ export class VaultPilotView extends ItemView {
 		const summary = status.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
 		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
-		const preludeEl = message.createDiv({ cls: 'vaultpilot-live-prelude' });
 		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
 		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
 		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
-		return { statusTitle, preludeEl, timelineEl, processEl, answerEl };
+		return { statusTitle, timelineEl, processEl, answerEl };
 	}
 
 	private updateLiveStatus(statusTitle: HTMLElement, label: string) {
 		statusTitle.setText(label);
-	}
-
-	private updateLivePrelude(preludeEl: HTMLElement, text: string) {
-		preludeEl.setText(text.trim());
 	}
 
 	private appendLiveTimelineEvent(container: HTMLElement, kind: 'running' | 'done' | 'error', title: string, detail: string): HTMLElement {
@@ -306,27 +301,38 @@ export class VaultPilotView extends ItemView {
 			text: formatElapsed(answer.trace.timings.totalMs),
 		});
 
-		const grid = details.createDiv({ cls: 'vaultpilot-trace-grid' });
-		this.renderTraceRow(grid, 'Original question', answer.trace.originalQuestion);
-		this.renderTraceRow(grid, 'Retrieval query', answer.trace.rewrittenQuery);
-		this.renderTraceRow(grid, 'Rewrite method', answer.trace.rewriteMethod);
-		this.renderTraceRow(grid, 'Retrieval mode', answer.trace.retrievalMode);
-		this.renderTraceRow(grid, 'References', `${answer.trace.sourceCount}`);
-		this.renderTraceRow(grid, 'Confidence', answer.trace.confidenceSummary);
-		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
-			this.renderTraceRow(grid, 'Tool calls', answer.trace.toolCalls.map(formatToolCall).join('\n\n'));
+		const log = details.createDiv({ cls: 'vaultpilot-process-log' });
+		this.renderProcessLogEntry(log, 'Question received', answer.trace.originalQuestion);
+		if (answer.trace.rewrittenQuery.trim()) {
+			this.renderProcessLogEntry(log, 'Search prepared', answer.trace.rewrittenQuery);
 		}
-		this.renderTraceRow(
-			grid,
-			'Timing',
-			`understanding ${formatElapsed(answer.trace.timings.understandingMs)}, retrieval ${formatElapsed(answer.trace.timings.retrievalMs)}, total ${formatElapsed(answer.trace.timings.totalMs)}`,
+		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
+			for (const toolCall of answer.trace.toolCalls) {
+				this.renderProcessLogEntry(
+					log,
+					`${toolCall.ok ? 'Completed' : 'Failed'} ${formatToolName(toolCall.name)}`,
+					formatToolLogDetail(toolCall),
+					toolCall.ok ? 'done' : 'error',
+				);
+			}
+		}
+		this.renderProcessLogEntry(
+			log,
+			answer.trace.sourceCount === 0 ? 'No vault sources found' : `Checked ${answer.trace.sourceCount} source${answer.trace.sourceCount === 1 ? '' : 's'}`,
+			answer.trace.confidenceSummary,
+			answer.trace.sourceCount === 0 ? 'warning' : 'done',
 		);
 		if (answer.trace.modelProcess.length > 0) {
-			this.renderTraceRow(grid, 'Model process', answer.trace.modelProcess.join('\n\n'));
+			this.renderProcessLogEntry(log, 'Assistant notes', answer.trace.modelProcess.join('\n\n'));
 		}
 		if (answer.trace.warnings.length > 0) {
-			this.renderTraceRow(grid, 'Warnings', answer.trace.warnings.join('; '));
+			this.renderProcessLogEntry(log, 'Warnings', answer.trace.warnings.join('; '), 'warning');
 		}
+		this.renderProcessLogEntry(
+			log,
+			'Timing',
+			`Understanding ${formatElapsed(answer.trace.timings.understandingMs)}, retrieval ${formatElapsed(answer.trace.timings.retrievalMs)}, total ${formatElapsed(answer.trace.timings.totalMs)}`,
+		);
 	}
 
 	private renderSources(message: HTMLElement, results: SearchResult[]) {
@@ -369,9 +375,19 @@ export class VaultPilotView extends ItemView {
 		}
 	}
 
-	private renderTraceRow(container: HTMLElement, label: string, value: string) {
-		container.createDiv({ cls: 'vaultpilot-trace-label', text: label });
-		container.createDiv({ cls: 'vaultpilot-trace-value', text: value });
+	private renderProcessLogEntry(
+		container: HTMLElement,
+		title: string,
+		detail: string,
+		kind: 'info' | 'done' | 'warning' | 'error' = 'info',
+	) {
+		const row = container.createDiv({ cls: `vaultpilot-process-log-entry vaultpilot-process-log-entry-${kind}` });
+		row.createSpan({ cls: 'vaultpilot-process-log-dot' });
+		const body = row.createDiv({ cls: 'vaultpilot-process-log-body' });
+		body.createDiv({ cls: 'vaultpilot-process-log-title', text: title });
+		if (detail.trim()) {
+			body.createDiv({ cls: 'vaultpilot-process-log-detail', text: detail.trim() });
+		}
 	}
 
 	private renderIndexStatus(stats: IndexStats) {
@@ -445,40 +461,25 @@ function formatElapsed(ms: number): string {
 }
 
 function buildProcessSummaryText(answer: AgentAnswer): string {
-	const count = answer.results.length;
 	if (answer.trace.warnings.includes('Tool-call step limit reached')) {
-		return count === 0
-			? 'Stopped after tool limit'
-			: `Stopped after tool limit with ${count} reference${count === 1 ? '' : 's'}`;
+		return 'Stopped';
 	}
 	if (answer.trace.warnings.length > 0) {
-		return count === 0
-			? 'Finished with warnings'
-			: `Finished with warnings and ${count} reference${count === 1 ? '' : 's'}`;
+		return 'Processed with warnings';
 	}
-	if (count === 0) {
-		return 'Processed, no reliable references found';
-	}
-	if (answer.trace.confidenceSummary.toLowerCase().includes('weak')) {
-		return `Found ${count} weak candidate reference${count === 1 ? '' : 's'}`;
-	}
-	if (answer.mode === 'remote') {
-		return `Answered using ${count} reference${count === 1 ? '' : 's'}`;
-	}
-	return `Found ${count} candidate reference${count === 1 ? '' : 's'}`;
+	return 'Processed';
 }
 
-function formatToolCall(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
-	const status = toolCall.ok ? 'OK' : 'Failed';
+function formatToolLogDetail(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
 	const lines = [
-		`${status} ${toolCall.name} (${formatElapsed(toolCall.durationMs)})`,
-		`Input: ${toolCall.input}`,
+		toolCall.input ? `Input: ${toolCall.input}` : '',
 		toolCall.summary,
+		`Duration: ${formatElapsed(toolCall.durationMs)}`,
 	];
 	if (toolCall.error) {
 		lines.push(`Error: ${toolCall.error}`);
 	}
-	return lines.join('\n');
+	return lines.filter(Boolean).join('\n');
 }
 
 function userFacingStatus(label: string): string {
