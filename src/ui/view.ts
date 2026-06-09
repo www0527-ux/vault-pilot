@@ -290,7 +290,7 @@ export class VaultPilotView extends ItemView {
 		const hasWarning = answer.trace.warnings.length > 0;
 		summary.createSpan({
 			cls: `vaultpilot-process-check ${hasWarning ? 'is-warning' : ''}`,
-			text: hasWarning ? '!' : 'OK',
+			text: hasWarning ? '!' : '',
 		});
 		summary.createSpan({
 			cls: 'vaultpilot-process-title',
@@ -302,37 +302,45 @@ export class VaultPilotView extends ItemView {
 		});
 
 		const log = details.createDiv({ cls: 'vaultpilot-process-log' });
-		this.renderProcessLogEntry(log, 'Question received', answer.trace.originalQuestion);
-		if (answer.trace.rewrittenQuery.trim()) {
-			this.renderProcessLogEntry(log, 'Search prepared', answer.trace.rewrittenQuery);
+		for (const note of answer.trace.modelProcess) {
+			this.renderProcessLogEntry(log, 'Interpreted request', note);
 		}
 		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
 			for (const toolCall of answer.trace.toolCalls) {
 				this.renderProcessLogEntry(
 					log,
-					`${toolCall.ok ? 'Completed' : 'Failed'} ${formatToolName(toolCall.name)}`,
-					formatToolLogDetail(toolCall),
+					buildToolLogTitle(toolCall),
+					buildToolLogSummary(toolCall),
 					toolCall.ok ? 'done' : 'error',
 				);
 			}
+		} else {
+			this.renderProcessLogEntry(
+				log,
+				'Searched vault',
+				answer.trace.sourceCount === 0
+					? 'No matching vault sources were strong enough to cite.'
+					: `Found ${answer.trace.sourceCount} candidate source${answer.trace.sourceCount === 1 ? '' : 's'}.`,
+				answer.trace.sourceCount === 0 ? 'warning' : 'done',
+			);
 		}
 		this.renderProcessLogEntry(
 			log,
-			answer.trace.sourceCount === 0 ? 'No vault sources found' : `Checked ${answer.trace.sourceCount} source${answer.trace.sourceCount === 1 ? '' : 's'}`,
+			answer.trace.sourceCount === 0 ? 'Checked evidence' : `Checked ${answer.trace.sourceCount} source${answer.trace.sourceCount === 1 ? '' : 's'}`,
 			answer.trace.confidenceSummary,
 			answer.trace.sourceCount === 0 ? 'warning' : 'done',
 		);
-		if (answer.trace.modelProcess.length > 0) {
-			this.renderProcessLogEntry(log, 'Assistant notes', answer.trace.modelProcess.join('\n\n'));
-		}
 		if (answer.trace.warnings.length > 0) {
 			this.renderProcessLogEntry(log, 'Warnings', answer.trace.warnings.join('; '), 'warning');
 		}
 		this.renderProcessLogEntry(
 			log,
-			'Timing',
-			`Understanding ${formatElapsed(answer.trace.timings.understandingMs)}, retrieval ${formatElapsed(answer.trace.timings.retrievalMs)}, total ${formatElapsed(answer.trace.timings.totalMs)}`,
+			'Prepared answer',
+			`Finished in ${formatElapsed(answer.trace.timings.totalMs)}.`,
+			hasWarning ? 'warning' : 'done',
 		);
+
+		this.renderDebugDetails(details, answer);
 	}
 
 	private renderSources(message: HTMLElement, results: SearchResult[]) {
@@ -388,6 +396,36 @@ export class VaultPilotView extends ItemView {
 		if (detail.trim()) {
 			body.createDiv({ cls: 'vaultpilot-process-log-detail', text: detail.trim() });
 		}
+	}
+
+	private renderDebugDetails(container: HTMLElement, answer: AgentAnswer) {
+		const debug = container.createEl('details', { cls: 'vaultpilot-debug-details' });
+		const summary = debug.createEl('summary');
+		summary.createSpan({ cls: 'vaultpilot-debug-title', text: 'Debug details' });
+
+		const grid = debug.createDiv({ cls: 'vaultpilot-debug-grid' });
+		this.renderDebugRow(grid, 'Original question', answer.trace.originalQuestion);
+		this.renderDebugRow(grid, 'Retrieval query', answer.trace.rewrittenQuery || '(none)');
+		this.renderDebugRow(grid, 'Rewrite method', answer.trace.rewriteMethod);
+		this.renderDebugRow(grid, 'Retrieval mode', answer.trace.retrievalMode);
+		this.renderDebugRow(grid, 'References', `${answer.trace.sourceCount}`);
+		this.renderDebugRow(grid, 'Confidence', answer.trace.confidenceSummary);
+		this.renderDebugRow(
+			grid,
+			'Timing',
+			`understanding ${formatElapsed(answer.trace.timings.understandingMs)}, retrieval ${formatElapsed(answer.trace.timings.retrievalMs)}, total ${formatElapsed(answer.trace.timings.totalMs)}`,
+		);
+		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
+			this.renderDebugRow(grid, 'Tool calls', answer.trace.toolCalls.map(formatToolDebugDetail).join('\n\n'));
+		}
+		if (answer.trace.warnings.length > 0) {
+			this.renderDebugRow(grid, 'Warnings', answer.trace.warnings.join('; '));
+		}
+	}
+
+	private renderDebugRow(container: HTMLElement, label: string, value: string) {
+		container.createDiv({ cls: 'vaultpilot-debug-label', text: label });
+		container.createDiv({ cls: 'vaultpilot-debug-value', text: value });
 	}
 
 	private renderIndexStatus(stats: IndexStats) {
@@ -470,8 +508,38 @@ function buildProcessSummaryText(answer: AgentAnswer): string {
 	return 'Processed';
 }
 
-function formatToolLogDetail(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
+function buildToolLogTitle(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
+	if (toolCall.name === 'search_notes') {
+		return toolCall.ok ? 'Searched notes' : 'Search failed';
+	}
+	if (toolCall.name === 'read_note') {
+		return toolCall.ok ? 'Read note' : 'Could not read note';
+	}
+	if (toolCall.name === 'inspect_folder') {
+		return toolCall.ok ? 'Inspected folder' : 'Folder inspection failed';
+	}
+	if (toolCall.name === 'classify_folder_files') {
+		return toolCall.ok ? 'Classified files' : 'File classification failed';
+	}
+	if (toolCall.name === 'get_current_note') {
+		return toolCall.ok ? 'Read current note' : 'Could not read current note';
+	}
+	if (toolCall.name === 'suggest_links') {
+		return toolCall.ok ? 'Found related notes' : 'Could not find related notes';
+	}
+	return `${toolCall.ok ? 'Used' : 'Failed'} ${formatToolName(toolCall.name)}`;
+}
+
+function buildToolLogSummary(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
+	if (toolCall.error) {
+		return toolCall.error;
+	}
+	return toolCall.summary || `Finished in ${formatElapsed(toolCall.durationMs)}.`;
+}
+
+function formatToolDebugDetail(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {
 	const lines = [
+		`${toolCall.ok ? 'OK' : 'Failed'} ${toolCall.name}`,
 		toolCall.input ? `Input: ${toolCall.input}` : '',
 		toolCall.summary,
 		`Duration: ${formatElapsed(toolCall.durationMs)}`,

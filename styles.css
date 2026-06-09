@@ -179,7 +179,7 @@
 }
 
 .vaultpilot-process-summary summary::after {
-	content: "›";
+	content: ">";
 	color: var(--text-faint);
 	font-size: 15px;
 	transition: transform 0.15s ease;
@@ -197,16 +197,21 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 16px;
-	height: 16px;
+	width: 9px;
+	height: 9px;
 	flex: 0 0 auto;
-	color: var(--text-success);
-	font-size: 14px;
+	border-radius: 50%;
+	background: var(--text-success);
+	color: var(--background-primary);
+	font-size: 10px;
 	font-weight: 700;
 	line-height: 1;
 }
 
 .vaultpilot-process-check.is-warning {
+	width: 16px;
+	height: 16px;
+	background: transparent;
 	color: var(--text-warning);
 }
 
@@ -245,7 +250,7 @@
 }
 
 .vaultpilot-process-steps span:not(:last-child)::after {
-	content: "·";
+	content: ".";
 	margin-left: 5px;
 }
 
@@ -371,6 +376,62 @@
 	white-space: pre-wrap;
 	color: var(--text-muted);
 	line-height: 1.35;
+}
+
+.vaultpilot-debug-details {
+	margin-top: 10px;
+	border-top: 1px solid var(--background-modifier-border);
+	padding-top: 8px;
+	color: var(--text-muted);
+}
+
+.vaultpilot-debug-details summary {
+	display: flex;
+	align-items: center;
+	gap: 7px;
+	min-height: 22px;
+	cursor: pointer;
+	list-style: none;
+}
+
+.vaultpilot-debug-details summary::-webkit-details-marker {
+	display: none;
+}
+
+.vaultpilot-debug-details summary::after {
+	content: ">";
+	margin-left: auto;
+	color: var(--text-faint);
+	font-size: 12px;
+	transition: transform 0.15s ease;
+}
+
+.vaultpilot-debug-details[open] summary::after {
+	transform: rotate(90deg);
+}
+
+.vaultpilot-debug-title {
+	color: var(--text-muted);
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.vaultpilot-debug-grid {
+	display: grid;
+	grid-template-columns: minmax(92px, auto) minmax(0, 1fr);
+	gap: 5px 8px;
+	margin-top: 7px;
+}
+
+.vaultpilot-debug-label {
+	color: var(--text-faint);
+	font-weight: 600;
+}
+
+.vaultpilot-debug-value {
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+	color: var(--text-muted);
 }
 
 .vaultpilot-live-answer {
