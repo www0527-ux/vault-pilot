@@ -1,9 +1,9 @@
 .vaultpilot-view {
 	display: flex;
 	flex-direction: column;
-	gap: 12px;
+	gap: 14px;
 	height: 100%;
-	padding: 14px;
+	padding: 16px;
 	color: var(--text-normal);
 	background: var(--background-primary);
 }
@@ -61,20 +61,20 @@
 	display: flex;
 	flex: 1 1 auto;
 	flex-direction: column;
-	gap: 8px;
+	gap: 14px;
 	min-height: 160px;
 	overflow-y: auto;
-	padding-right: 2px;
+	padding-right: 4px;
 	scroll-behavior: smooth;
 }
 
 .vaultpilot-message {
 	white-space: pre-wrap;
-	border: 1px solid var(--background-modifier-border);
-	border-radius: 8px;
-	padding: 9px 10px;
-	font-size: 13px;
-	line-height: 1.45;
+	border: 0;
+	border-radius: 0;
+	padding: 0;
+	font-size: 14px;
+	line-height: 1.5;
 }
 
 .vaultpilot-message-markdown {
@@ -95,12 +95,16 @@
 }
 
 .vaultpilot-message-assistant {
-	background: var(--background-secondary);
+	background: transparent;
 }
 
 .vaultpilot-message-user {
-	margin-left: 20px;
+	align-self: flex-end;
+	max-width: 88%;
 	background: var(--interactive-normal);
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 14px;
+	padding: 8px 12px;
 }
 
 .vaultpilot-footer {
@@ -158,18 +162,22 @@
 }
 
 .vaultpilot-process-summary {
-	margin-bottom: 10px;
-	border-bottom: 1px solid var(--background-modifier-border);
-	padding: 0 0 8px;
+	overflow: hidden;
+	margin: 2px 0 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 0;
+	background: var(--background-secondary);
 	color: var(--text-muted);
-	font-size: 12px;
+	font-size: 13px;
 }
 
 .vaultpilot-process-summary summary {
 	display: flex;
 	align-items: center;
-	gap: 7px;
-	min-height: 24px;
+	gap: 9px;
+	min-height: 38px;
+	padding: 0 12px;
 	cursor: pointer;
 	list-style: none;
 }
@@ -181,7 +189,7 @@
 .vaultpilot-process-summary summary::after {
 	content: ">";
 	color: var(--text-faint);
-	font-size: 15px;
+	font-size: 14px;
 	transition: transform 0.15s ease;
 }
 
@@ -197,8 +205,8 @@
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 9px;
-	height: 9px;
+	width: 10px;
+	height: 10px;
 	flex: 0 0 auto;
 	border-radius: 50%;
 	background: var(--text-success);
@@ -219,7 +227,6 @@
 	width: 14px;
 	height: 14px;
 	flex: 0 0 auto;
-	margin-top: 4px;
 	border: 2px solid var(--background-modifier-border);
 	border-top-color: var(--text-accent);
 	border-radius: 50%;
@@ -233,6 +240,7 @@
 .vaultpilot-process-title {
 	color: var(--text-normal);
 	font-weight: 600;
+	letter-spacing: 0;
 }
 
 .vaultpilot-process-time {
@@ -256,14 +264,16 @@
 
 .vaultpilot-live-timeline {
 	display: grid;
-	gap: 6px;
-	margin-top: 8px;
+	gap: 9px;
+	margin: 0;
+	border-top: 1px solid var(--background-modifier-border);
+	padding: 11px 14px 0;
 }
 
 .vaultpilot-live-step {
 	display: grid;
-	grid-template-columns: 14px minmax(0, 1fr);
-	gap: 7px;
+	grid-template-columns: 16px minmax(0, 1fr);
+	gap: 9px;
 	align-items: start;
 }
 
@@ -313,12 +323,14 @@
 }
 
 .vaultpilot-live-process {
-	margin-top: 7px;
+	margin: 0;
 	max-height: 96px;
 	overflow-y: auto;
+	border-top: 1px solid var(--background-modifier-border);
+	padding: 11px 14px 0;
 	white-space: pre-wrap;
 	color: var(--text-muted);
-	font-size: 12px;
+	font-size: 13px;
 	line-height: 1.4;
 }
 
@@ -328,19 +340,27 @@
 
 .vaultpilot-process-log {
 	display: grid;
-	gap: 7px;
-	margin-top: 8px;
+	gap: 10px;
+	margin-top: 0;
+	border-top: 1px solid var(--background-modifier-border);
+	padding: 12px 14px;
+}
+
+.vaultpilot-process-log:empty {
+	display: none;
 }
 
 .vaultpilot-process-log-entry {
 	display: grid;
-	grid-template-columns: 14px minmax(0, 1fr);
-	gap: 7px;
+	grid-template-columns: 16px minmax(0, 1fr);
+	gap: 9px;
 	align-items: start;
 }
 
 .vaultpilot-process-note {
 	overflow-wrap: anywhere;
+	border-left: 2px solid var(--background-modifier-border);
+	padding-left: 10px;
 	white-space: pre-wrap;
 	color: var(--text-muted);
 	line-height: 1.4;
@@ -386,7 +406,7 @@
 }
 
 .vaultpilot-debug-details {
-	margin-top: 10px;
+	margin: 0 14px 12px;
 	border-top: 1px solid var(--background-modifier-border);
 	padding-top: 8px;
 	color: var(--text-muted);
@@ -443,6 +463,10 @@
 
 .vaultpilot-live-answer {
 	white-space: pre-wrap;
+}
+
+.vaultpilot-live-answer:empty {
+	display: none;
 }
 
 .vaultpilot-sources {
