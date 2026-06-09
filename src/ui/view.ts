@@ -305,7 +305,7 @@ export class VaultPilotView extends ItemView {
 
 		const log = details.createDiv({ cls: 'vaultpilot-process-log' });
 		for (const note of answer.trace.modelProcess) {
-			this.renderProcessLogEntry(log, 'Interpreted request', note);
+			this.renderProcessTextBlock(log, note);
 		}
 		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
 			for (const toolCall of answer.trace.toolCalls) {
@@ -316,31 +316,10 @@ export class VaultPilotView extends ItemView {
 					toolCall.ok ? 'done' : 'error',
 				);
 			}
-		} else {
-			this.renderProcessLogEntry(
-				log,
-				'Searched vault',
-				answer.trace.sourceCount === 0
-					? 'No matching vault sources were strong enough to cite.'
-					: `Found ${answer.trace.sourceCount} candidate source${answer.trace.sourceCount === 1 ? '' : 's'}.`,
-				answer.trace.sourceCount === 0 ? 'warning' : 'done',
-			);
 		}
-		this.renderProcessLogEntry(
-			log,
-			answer.trace.sourceCount === 0 ? 'Checked evidence' : `Checked ${answer.trace.sourceCount} source${answer.trace.sourceCount === 1 ? '' : 's'}`,
-			answer.trace.confidenceSummary,
-			answer.trace.sourceCount === 0 ? 'warning' : 'done',
-		);
 		if (answer.trace.warnings.length > 0) {
 			this.renderProcessLogEntry(log, 'Warnings', answer.trace.warnings.join('; '), 'warning');
 		}
-		this.renderProcessLogEntry(
-			log,
-			'Prepared answer',
-			`Finished in ${formatElapsed(answer.trace.timings.totalMs)}.`,
-			hasWarning ? 'warning' : 'done',
-		);
 
 		this.renderDebugDetails(details, answer);
 	}
@@ -398,6 +377,13 @@ export class VaultPilotView extends ItemView {
 		if (detail.trim()) {
 			body.createDiv({ cls: 'vaultpilot-process-log-detail', text: detail.trim() });
 		}
+	}
+
+	private renderProcessTextBlock(container: HTMLElement, text: string) {
+		if (!text.trim()) {
+			return;
+		}
+		container.createDiv({ cls: 'vaultpilot-process-note', text: text.trim() });
 	}
 
 	private renderDebugDetails(container: HTMLElement, answer: AgentAnswer) {

@@ -22,6 +22,7 @@ export class AgentRunner {
 			{ role: 'user', content: request.question },
 		];
 		const toolResults: ToolExecutionResult[] = [];
+		const process: string[] = [];
 		const maxSteps = request.maxSteps;
 
 		for (let step = 0; maxSteps === undefined || step < maxSteps; step += 1) {
@@ -57,9 +58,16 @@ export class AgentRunner {
 					answer: response.answer || 'I could not produce an answer from the available tool results.',
 					results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
 					toolResults,
+					process,
 					durationMs: Date.now() - startedAt,
 					warnings: [],
 				};
+			}
+
+			if (response.answer?.trim()) {
+				const note = response.answer.trim();
+				process.push(note);
+				request.onEvent?.({ type: 'process', delta: `\n\n${note}` });
 			}
 
 			messages.push({
@@ -116,6 +124,7 @@ export class AgentRunner {
 			answer: buildStepLimitAnswer(toolResults),
 			results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
 			toolResults,
+			process,
 			durationMs: Date.now() - startedAt,
 			warnings: [TOOL_STEP_LIMIT_WARNING],
 		};
@@ -134,7 +143,7 @@ function buildSystemPrompt(): string {
 		'Tool paths must be vault-relative paths. If the user gives an absolute filesystem path, convert it to the path relative to the vault before calling tools.',
 		'When calling search_notes, provide retrieval-ready query parameters yourself.',
 		'Preserve exact entities from the user request. For complex questions, provide several focused queries.',
-		'Do not make a separate plan visible to the user. Do not expose hidden reasoning.',
+		'If helpful before using tools, write one brief user-facing progress sentence in assistant content. Do not expose hidden reasoning.',
 		'After tool results arrive, answer using only the tool-provided vault evidence. Cite note paths in square brackets.',
 		'If the tool results are insufficient, say what is missing and suggest what to search next.',
 		'Do not keep calling tools just to exhaustively inspect every candidate. Once the evidence is enough to answer, stop using tools and write the answer.',

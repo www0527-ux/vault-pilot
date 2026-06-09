@@ -62,6 +62,7 @@ export interface AgentRunResult {
 	answer: string;
 	results: SearchResult[];
 	toolResults: ToolExecutionResult[];
+	process: string[];
 	durationMs: number;
 	warnings: string[];
 }

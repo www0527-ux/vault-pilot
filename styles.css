@@ -339,6 +339,13 @@
 	align-items: start;
 }
 
+.vaultpilot-process-note {
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+	color: var(--text-muted);
+	line-height: 1.4;
+}
+
 .vaultpilot-process-log-dot {
 	width: 8px;
 	height: 8px;

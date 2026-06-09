@@ -192,13 +192,6 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 
 	async streamAnswerQuestion(question: string, onEvent: (event: AgentStreamEvent) => void): Promise<AgentAnswer> {
-		const preludeActiveFile = this.getActiveMarkdownFile();
-		const preludeText = buildAssistantPrelude(question, preludeActiveFile, this.settings.includeCurrentNote);
-		onEvent({
-			type: 'assistant_prelude',
-			text: preludeText,
-		});
-
 		if (this.settings.provider === 'local') {
 			onEvent({ type: 'status', label: 'Searching notes' });
 			const { activeFile, results, trace } = await this.prepareQuestion(question);
@@ -206,20 +199,20 @@ export default class VaultPilotPlugin extends Plugin {
 				answer: buildLocalAnswer(question, results, activeFile),
 				results,
 				mode: 'local',
-				trace: addModelProcess(trace, [preludeText]),
+				trace,
 			};
 		}
 
 		if (!this.settings.apiKey.trim()) {
 			const { activeFile, results, trace } = await this.prepareQuestion(question);
-			return this.missingApiKeyAnswer(question, activeFile, results, addModelProcess(trace, [preludeText]));
+			return this.missingApiKeyAnswer(question, activeFile, results, trace);
 		}
 
 		if (this.canUseToolCalling()) {
 			try {
 				onEvent({ type: 'status', label: 'Choosing tools' });
 				const answer = await this.answerQuestionWithTools(question, onEvent);
-				return { ...answer, trace: addModelProcess(answer.trace, [preludeText]) };
+				return answer;
 			} catch (error) {
 				console.error(error);
 				new Notice('VaultPilot tool calling failed. Falling back to fixed RAG.');
@@ -229,7 +222,7 @@ export default class VaultPilotPlugin extends Plugin {
 
 		const prepared = await this.prepareQuestion(question);
 		const { activeFile, activeContent, results } = prepared;
-		const trace = addModelProcess(prepared.trace, [preludeText]);
+		const trace = prepared.trace;
 		onEvent({ type: 'status', label: 'Preparing answer' });
 
 		try {
@@ -338,7 +331,7 @@ export default class VaultPilotPlugin extends Plugin {
 			answer: result.answer,
 			results: result.results,
 			mode: 'remote',
-			trace: buildAgentTrace(question, result.results, result.toolResults, result.durationMs, result.warnings),
+			trace: buildAgentTrace(question, result.results, result.toolResults, result.process, result.durationMs, result.warnings),
 			warning: result.warnings.join('; ') || undefined,
 		};
 	}
@@ -474,39 +467,6 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 }
 
-function buildAssistantPrelude(question: string, activeFile: TFile | null, includeCurrentNote: boolean): string {
-	const normalized = question.toLowerCase();
-	const hasCurrentNote = Boolean(activeFile && includeCurrentNote);
-	const currentNoteText = hasCurrentNote ? `current note (${activeFile?.basename}) and ` : '';
-
-	if (
-		/\b(link|links|wikilink|related note|related notes)\b/u.test(normalized)
-		|| /\u94fe\u63a5|\u5173\u8054\u7b14\u8bb0|\u76f8\u5173\u7b14\u8bb0/u.test(question)
-	) {
-		return hasCurrentNote
-			? `I'll check the current note and its existing links, then look for related vault notes.`
-			: `I'll look for related vault notes and surface the strongest link candidates.`;
-	}
-
-	if (
-		/\b(folder|directory|project|summari[sz]e|overview|structure)\b/u.test(normalized)
-		|| /\u6587\u4ef6\u5939|\u76ee\u5f55|\u9879\u76ee|\u603b\u7ed3|\u6982\u89c8|\u7ed3\u6784/u.test(question)
-	) {
-		return `I'll inspect the relevant vault structure first, then use representative notes to answer.`;
-	}
-
-	if (
-		/\b(current note|active note|this note|explain)\b/u.test(normalized)
-		|| /\u5f53\u524d\u7b14\u8bb0|\u8fd9\u7bc7\u7b14\u8bb0|\u89e3\u91ca/u.test(question)
-	) {
-		return hasCurrentNote
-			? `I'll read the current note first, then check whether the vault has supporting context.`
-			: `I'll search the vault for the most relevant notes, then answer from the available sources.`;
-	}
-
-	return `I'll search the ${currentNoteText}vault for useful sources before answering.`;
-}
-
 function buildTrace(
 	rewrite: QueryRewrite,
 	results: SearchResult[],
@@ -544,6 +504,7 @@ function buildAgentTrace(
 	question: string,
 	results: SearchResult[],
 	toolResults: ToolExecutionResult[],
+	process: string[],
 	totalMs: number,
 	warnings: string[],
 ): ResponseTrace {
@@ -574,7 +535,7 @@ function buildAgentTrace(
 			error: result.error,
 		})),
 		confidenceSummary: summarizeRetrievalConfidence(results),
-		modelProcess: [],
+		modelProcess: process,
 		timings: {
 			understandingMs: 0,
 			retrievalMs: toolResults.reduce((sum, result) => sum + result.durationMs, 0),
