@@ -96,12 +96,15 @@ export class VaultPilotView extends ItemView {
 		const activeToolRows = new Map<string, HTMLElement[]>();
 
 		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
+			if (event.type === 'assistant_prelude') {
+				this.updateLivePrelude(live.preludeEl, event.text);
+				this.updateLiveStatus(live.statusTitle, 'Getting oriented');
+				this.scrollMessagesToBottom();
+				return;
+			}
 			if (event.type === 'status') {
 				const title = userFacingStatus(event.label);
 				this.updateLiveStatus(live.statusTitle, title);
-				if (event.label === 'Writing answer' || event.label === 'Preparing answer') {
-					this.appendLiveTimelineEvent(live.timelineEl, 'running', title, '');
-				}
 				this.scrollMessagesToBottom();
 				return;
 			}
@@ -218,6 +221,7 @@ export class VaultPilotView extends ItemView {
 
 	private renderLiveAnswerShell(message: HTMLElement): {
 		statusTitle: HTMLElement;
+		preludeEl: HTMLElement;
 		timelineEl: HTMLElement;
 		processEl: HTMLElement;
 		answerEl: HTMLElement;
@@ -227,15 +231,19 @@ export class VaultPilotView extends ItemView {
 		const summary = status.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
 		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
+		const preludeEl = message.createDiv({ cls: 'vaultpilot-live-prelude' });
 		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
-		this.appendLiveTimelineEvent(timelineEl, 'running', 'Understanding question', '');
 		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
 		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
-		return { statusTitle, timelineEl, processEl, answerEl };
+		return { statusTitle, preludeEl, timelineEl, processEl, answerEl };
 	}
 
 	private updateLiveStatus(statusTitle: HTMLElement, label: string) {
 		statusTitle.setText(label);
+	}
+
+	private updateLivePrelude(preludeEl: HTMLElement, text: string) {
+		preludeEl.setText(text.trim());
 	}
 
 	private appendLiveTimelineEvent(container: HTMLElement, kind: 'running' | 'done' | 'error', title: string, detail: string): HTMLElement {

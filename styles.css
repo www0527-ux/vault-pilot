@@ -249,6 +249,17 @@
 	margin-left: 5px;
 }
 
+.vaultpilot-live-prelude {
+	margin-bottom: 9px;
+	color: var(--text-normal);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.vaultpilot-live-prelude:empty {
+	display: none;
+}
+
 .vaultpilot-live-timeline {
 	display: grid;
 	gap: 6px;

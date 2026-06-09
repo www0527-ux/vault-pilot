@@ -142,6 +142,7 @@ export interface AgentAnswer {
 }
 
 export type AgentStreamEvent =
+	| { type: 'assistant_prelude'; text: string }
 	| { type: 'status'; label: string }
 	| { type: 'step_start'; step: number; label: string }
 	| { type: 'step_finish'; step: number; label: string; durationMs: number }
