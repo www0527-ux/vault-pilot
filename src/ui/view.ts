@@ -232,8 +232,8 @@ export class VaultPilotView extends ItemView {
 		const summary = status.createEl('summary');
 		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
 		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
-		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
 		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
+		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
 		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
 		return { statusTitle, timelineEl, processEl, answerEl };
 	}
