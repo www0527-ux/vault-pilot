@@ -168,8 +168,18 @@ export async function callRemoteModel(
 	activeFile: TFile | null,
 	activeContent: string,
 	memoryContext = '',
+	conversationContext = '',
 ): Promise<RemoteModelAnswer> {
-	const { endpoint, body } = await buildChatRequest(options, question, results, activeFile, activeContent, memoryContext, false);
+	const { endpoint, body } = await buildChatRequest(
+		options,
+		question,
+		results,
+		activeFile,
+		activeContent,
+		memoryContext,
+		conversationContext,
+		false,
+	);
 
 	const response = await requestUrl({
 		url: endpoint,
@@ -318,9 +328,19 @@ export async function callRemoteModelStream(
 	activeFile: TFile | null,
 	activeContent: string,
 	memoryContext: string,
+	conversationContext: string,
 	onEvent: (event: RemoteStreamEvent) => void,
 ): Promise<RemoteModelAnswer> {
-	const { endpoint, body } = await buildChatRequest(options, question, results, activeFile, activeContent, memoryContext, true);
+	const { endpoint, body } = await buildChatRequest(
+		options,
+		question,
+		results,
+		activeFile,
+		activeContent,
+		memoryContext,
+		conversationContext,
+		true,
+	);
 	const response = await window.fetch(endpoint, {
 		method: 'POST',
 		headers: {
@@ -387,6 +407,7 @@ async function buildChatRequest(
 	activeFile: TFile | null,
 	activeContent: string,
 	memoryContext: string,
+	conversationContext: string,
 	stream: boolean,
 ): Promise<{ endpoint: string; body: Record<string, unknown> }> {
 	const { endpoint, model } = await resolveChatTarget(options);
@@ -411,6 +432,7 @@ async function buildChatRequest(
 	const prompt = [
 		'You are VaultPilot, an Obsidian knowledge agent.',
 		formatMemoryContext(memoryContext),
+		formatConversationContext(conversationContext),
 		'Answer using only the supplied notes. Cite note paths in square brackets.',
 		'If the notes are insufficient, say what is missing and suggest what to search next.',
 		'Put no planning, analysis, source-selection narrative, or hidden reasoning in the final answer.',
@@ -483,6 +505,17 @@ function parseToolArguments(args: string): unknown {
 	} catch {
 		return { raw: args };
 	}
+}
+
+function formatConversationContext(conversationContext: string): string {
+	const cleaned = conversationContext.trim();
+	if (!cleaned) {
+		return '';
+	}
+	return [
+		'Recent conversation context follows. Use it to understand follow-up questions. It is not note evidence.',
+		cleaned,
+	].join('\n\n');
 }
 
 function formatMemoryContext(memoryContext: string): string {

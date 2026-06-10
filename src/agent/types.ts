@@ -53,6 +53,7 @@ export interface ToolExecutionResult {
 export interface AgentRunRequest {
 	question: string;
 	memoryContext?: string;
+	conversationContext?: string;
 	maxSteps?: number;
 	onStatus?: (label: string) => void;
 	onEvent?: (event: AgentStreamEvent) => void;

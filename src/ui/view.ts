@@ -6,11 +6,17 @@ import type VaultPilotPlugin from '../main';
 
 export const VIEW_TYPE_VAULTPILOT = 'vaultpilot-agent-view';
 
+interface ConversationTurn {
+	user: string;
+	assistant: string;
+}
+
 export class VaultPilotView extends ItemView {
 	private plugin: VaultPilotPlugin;
 	private inputEl!: HTMLTextAreaElement;
 	private messagesEl!: HTMLElement;
 	private indexStatusEl!: HTMLElement;
+	private conversationTurns: ConversationTurn[] = [];
 	private latestIndexStats: IndexStats | null = null;
 	private stopIndexListener: (() => void) | null = null;
 	private statusTimer: number | null = null;
@@ -94,8 +100,9 @@ export class VaultPilotView extends ItemView {
 		let liveAnswer = '';
 		let liveProcess = '';
 		const activeToolRows = new Map<string, HTMLElement[]>();
+		const conversationContext = this.buildConversationContext();
 
-		const answer = await this.plugin.streamAnswerQuestion(question, (event) => {
+		const answer = await this.plugin.streamAnswerQuestion(question, conversationContext, (event) => {
 			if (event.type === 'assistant_prelude') {
 				liveProcess += event.text;
 				this.updateLiveProcess(live.processEl, liveProcess);
@@ -177,6 +184,7 @@ export class VaultPilotView extends ItemView {
 			this.scrollMessagesToBottom();
 		});
 		await this.renderAssistantAnswer(loading, answer);
+		this.rememberConversationTurn(question, answer.answer);
 		this.scrollMessagesToBottom();
 	}
 
@@ -202,6 +210,28 @@ export class VaultPilotView extends ItemView {
 		message.setText(text);
 		this.scrollMessagesToBottom();
 		return message;
+	}
+
+	private buildConversationContext(): string {
+		return this.conversationTurns
+			.slice(-6)
+			.map((turn, index) => [
+				`Turn ${index + 1}`,
+				`User: ${turn.user}`,
+				`Assistant: ${turn.assistant}`,
+			].join('\n'))
+			.join('\n\n')
+			.slice(-4000);
+	}
+
+	private rememberConversationTurn(user: string, assistant: string) {
+		this.conversationTurns.push({
+			user: user.trim(),
+			assistant: assistant.trim().slice(0, 1600),
+		});
+		if (this.conversationTurns.length > 8) {
+			this.conversationTurns = this.conversationTurns.slice(-8);
+		}
 	}
 
 	private async renderAssistantAnswer(message: HTMLElement, answer: AgentAnswer) {

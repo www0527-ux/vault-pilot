@@ -18,7 +18,7 @@ export class AgentRunner {
 	async run(request: AgentRunRequest): Promise<AgentRunResult> {
 		const startedAt = Date.now();
 		const messages: ChatMessage[] = [
-			{ role: 'system', content: buildSystemPrompt(request.memoryContext) },
+			{ role: 'system', content: buildSystemPrompt(request.memoryContext, request.conversationContext) },
 			{ role: 'user', content: request.question },
 		];
 		const toolResults: ToolExecutionResult[] = [];
@@ -179,10 +179,11 @@ export class AgentRunner {
 	}
 }
 
-function buildSystemPrompt(memoryContext?: string): string {
+function buildSystemPrompt(memoryContext?: string, conversationContext?: string): string {
 	return [
 		'You are VaultPilot, an Obsidian knowledge agent.',
 		formatMemoryContext(memoryContext),
+		formatConversationContext(conversationContext),
 		'Use tools when the answer depends on the user vault, the current note, note contents, or related links.',
 		'Tool paths must be vault-relative paths. If the user gives an absolute filesystem path, convert it to the path relative to the vault before calling tools.',
 		'When calling search_notes, provide retrieval-ready query parameters yourself.',
@@ -196,6 +197,17 @@ function buildSystemPrompt(memoryContext?: string): string {
 		'For category-count questions inside a folder, call classify_folder_files. Do not estimate semantic category counts from inspect_folder alone.',
 		'Do not claim a rewritten query or search plan is vault evidence.',
 	].join('\n');
+}
+
+function formatConversationContext(conversationContext?: string): string {
+	const cleaned = conversationContext?.trim();
+	if (!cleaned) {
+		return 'No prior conversation context is available.';
+	}
+	return [
+		'Recent conversation context follows. Use it to resolve pronouns, follow-up questions, and user intent. It is not vault evidence.',
+		cleaned,
+	].join('\n\n');
 }
 
 function formatMemoryContext(memoryContext?: string): string {

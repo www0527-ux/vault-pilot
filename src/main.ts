@@ -163,7 +163,7 @@ export default class VaultPilotPlugin extends Plugin {
 		return this.indexManager.classifyFolderFiles(options);
 	}
 
-	async answerQuestion(question: string): Promise<AgentAnswer> {
+	async answerQuestion(question: string, conversationContext = ''): Promise<AgentAnswer> {
 		const memory = parseMemoryRequest(question);
 		if (memory) {
 			return this.remember(memory, question);
@@ -171,7 +171,7 @@ export default class VaultPilotPlugin extends Plugin {
 
 		if (this.canUseToolCalling()) {
 			try {
-				return await this.answerQuestionWithTools(question);
+				return await this.answerQuestionWithTools(question, undefined, conversationContext);
 			} catch (error) {
 				console.debug('VaultPilot tool calling failed. Falling back to fixed RAG.', error);
 			}
@@ -192,6 +192,7 @@ export default class VaultPilotPlugin extends Plugin {
 					activeFile,
 					activeContent,
 					await this.readMemoryContext(),
+					conversationContext,
 				);
 				const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
 				return { answer: cleaned.answer, results, mode: 'remote', trace: addModelProcess(trace, cleaned.process) };
@@ -208,7 +209,11 @@ export default class VaultPilotPlugin extends Plugin {
 		};
 	}
 
-	async streamAnswerQuestion(question: string, onEvent: (event: AgentStreamEvent) => void): Promise<AgentAnswer> {
+	async streamAnswerQuestion(
+		question: string,
+		conversationContext: string,
+		onEvent: (event: AgentStreamEvent) => void,
+	): Promise<AgentAnswer> {
 		const memory = parseMemoryRequest(question);
 		if (memory) {
 			return this.remember(memory, question);
@@ -233,7 +238,7 @@ export default class VaultPilotPlugin extends Plugin {
 		if (this.canUseToolCalling()) {
 			try {
 				onEvent({ type: 'status', label: 'Choosing tools' });
-				const answer = await this.answerQuestionWithTools(question, onEvent);
+				const answer = await this.answerQuestionWithTools(question, onEvent, conversationContext);
 				return answer;
 			} catch (error) {
 				console.error(error);
@@ -257,6 +262,7 @@ export default class VaultPilotPlugin extends Plugin {
 				activeFile,
 				activeContent,
 				await this.readMemoryContext(),
+				conversationContext,
 				(event) => {
 					if (event.type === 'process') {
 						onEvent({ type: 'process', delta: event.delta });
@@ -281,6 +287,7 @@ export default class VaultPilotPlugin extends Plugin {
 					activeFile,
 					activeContent,
 					await this.readMemoryContext(),
+					conversationContext,
 				);
 				const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
 				return {
@@ -339,6 +346,7 @@ export default class VaultPilotPlugin extends Plugin {
 	private async answerQuestionWithTools(
 		question: string,
 		onEvent?: (event: AgentStreamEvent) => void,
+		conversationContext = '',
 	): Promise<AgentAnswer> {
 		const runner = new AgentRunner(
 			this.getChatClientOptions(),
@@ -350,7 +358,12 @@ export default class VaultPilotPlugin extends Plugin {
 				maxResults: this.settings.maxResults,
 			},
 		);
-		const result = await runner.run({ question, memoryContext: await this.readMemoryContext(), onEvent });
+		const result = await runner.run({
+			question,
+			memoryContext: await this.readMemoryContext(),
+			conversationContext,
+			onEvent,
+		});
 		return {
 			answer: result.answer,
 			results: result.results,
