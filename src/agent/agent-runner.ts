@@ -1,6 +1,6 @@
 import { SearchResult } from '../rag/types';
 import { ChatClientOptions } from '../llm/chat';
-import { ChatMessage, completeChatText, completeChatWithTools } from '../llm/chat';
+import { ChatMessage, completeChatStream, completeChatText, completeChatWithTools } from '../llm/chat';
 import { ToolContext, AgentRunRequest, AgentRunResult, ToolExecutionResult } from './types';
 import { ToolExecutor } from './tool-executor';
 import { ToolRegistry } from './tool-registry';
@@ -55,8 +55,9 @@ export class AgentRunner {
 					durationMs: Date.now() - stepStartedAt,
 				});
 				this.emitStatus(request, 'Writing answer');
+				const streamed = await this.streamFinalAnswer(request, messages);
 				return {
-					answer: response.answer || 'I could not produce an answer from the available tool results.',
+					answer: streamed || response.answer || 'I could not produce an answer from the available tool results.',
 					results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
 					toolResults,
 					process,
@@ -152,6 +153,30 @@ export class AgentRunner {
 			console.debug('VaultPilot progress note generation failed.', error);
 		}
 	}
+
+	private async streamFinalAnswer(request: AgentRunRequest, messages: ChatMessage[]): Promise<string> {
+		try {
+			const response = await completeChatStream(
+				this.chatOptions,
+				[
+					...messages,
+					{ role: 'system', content: buildFinalAnswerPrompt() },
+				],
+				(event) => {
+					if (event.type === 'answer') {
+						request.onAnswerDelta?.(event.delta);
+						request.onEvent?.({ type: 'answer', delta: event.delta });
+						return;
+					}
+					request.onEvent?.({ type: 'process', delta: event.delta });
+				},
+			);
+			return response.answer.trim();
+		} catch (error) {
+			console.debug('VaultPilot final answer streaming failed.', error);
+			return '';
+		}
+	}
 }
 
 function buildSystemPrompt(): string {
@@ -179,6 +204,16 @@ function buildProgressPrompt(): string {
 		'Describe what you are about to check, using the user language.',
 		'Do not reveal hidden reasoning. Do not mention tools, JSON, implementation details, or citations.',
 		'Do not answer the question.',
+	].join('\n');
+}
+
+function buildFinalAnswerPrompt(): string {
+	return [
+		'Write the final answer now.',
+		'Use only the vault evidence from the tool results already provided in this conversation.',
+		'Cite note paths in square brackets when making claims from notes.',
+		'If the evidence is insufficient, say what is missing and suggest what to search next.',
+		'Do not call tools. Do not describe your process. Start directly with the answer.',
 	].join('\n');
 }
 
