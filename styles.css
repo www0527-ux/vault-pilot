@@ -201,6 +201,24 @@
 	display: block;
 }
 
+.vaultpilot-live-process-panel {
+	overflow: hidden;
+	margin: 2px 0 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-size: 13px;
+}
+
+.vaultpilot-live-process-header {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+	min-height: 38px;
+	padding: 0 12px;
+}
+
 .vaultpilot-process-check {
 	display: inline-flex;
 	align-items: center;
@@ -279,10 +297,33 @@
 }
 
 .vaultpilot-live-step {
+	display: block;
+}
+
+.vaultpilot-live-step summary {
 	display: grid;
-	grid-template-columns: 16px minmax(0, 1fr);
+	grid-template-columns: 16px minmax(0, 1fr) auto;
 	gap: 9px;
 	align-items: start;
+	cursor: pointer;
+	list-style: none;
+}
+
+.vaultpilot-live-step summary::-webkit-details-marker {
+	display: none;
+}
+
+.vaultpilot-live-step summary::after {
+	content: ">";
+	grid-column: 3;
+	width: fit-content;
+	color: var(--text-faint);
+	font-size: 12px;
+	transition: transform 0.15s ease;
+}
+
+.vaultpilot-live-step[open] summary::after {
+	transform: rotate(90deg);
 }
 
 .vaultpilot-live-step-dot {
@@ -323,7 +364,7 @@
 }
 
 .vaultpilot-live-step-detail {
-	margin-top: 2px;
+	margin: 4px 0 0 25px;
 	overflow-wrap: anywhere;
 	white-space: pre-wrap;
 	color: var(--text-muted);
@@ -361,6 +402,76 @@
 	grid-template-columns: 16px minmax(0, 1fr);
 	gap: 9px;
 	align-items: start;
+}
+
+.vaultpilot-tool-call {
+	display: block;
+}
+
+.vaultpilot-tool-call summary {
+	display: grid;
+	grid-template-columns: 16px minmax(0, 1fr) auto auto;
+	gap: 9px;
+	align-items: start;
+	cursor: pointer;
+	list-style: none;
+}
+
+.vaultpilot-tool-call summary::-webkit-details-marker {
+	display: none;
+}
+
+.vaultpilot-tool-call summary::after {
+	content: ">";
+	grid-column: 4;
+	width: fit-content;
+	color: var(--text-faint);
+	font-size: 12px;
+	transition: transform 0.15s ease;
+}
+
+.vaultpilot-tool-call[open] summary::after {
+	transform: rotate(90deg);
+}
+
+.vaultpilot-tool-call-preview {
+	overflow: hidden;
+	margin-top: 1px;
+	color: var(--text-muted);
+	text-overflow: ellipsis;
+	white-space: nowrap;
+	line-height: 1.35;
+}
+
+.vaultpilot-tool-call-time {
+	color: var(--text-faint);
+	font-variant-numeric: tabular-nums;
+	line-height: 1.35;
+}
+
+.vaultpilot-tool-call-detail {
+	display: grid;
+	gap: 6px;
+	margin: 8px 0 0 25px;
+	border-left: 2px solid var(--background-modifier-border);
+	padding-left: 10px;
+}
+
+.vaultpilot-tool-call-detail-row {
+	display: grid;
+	grid-template-columns: 58px minmax(0, 1fr);
+	gap: 8px;
+}
+
+.vaultpilot-tool-call-detail-label {
+	color: var(--text-faint);
+	font-weight: 600;
+}
+
+.vaultpilot-tool-call-detail-value {
+	overflow-wrap: anywhere;
+	white-space: pre-wrap;
+	color: var(--text-muted);
 }
 
 .vaultpilot-process-note {

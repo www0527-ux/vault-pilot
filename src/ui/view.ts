@@ -227,11 +227,10 @@ export class VaultPilotView extends ItemView {
 		answerEl: HTMLElement;
 	} {
 		message.empty();
-		const status = message.createEl('details', { cls: 'vaultpilot-process-summary is-working' });
-		status.open = false;
-		const summary = status.createEl('summary');
-		summary.createSpan({ cls: 'vaultpilot-process-spinner' });
-		const statusTitle = summary.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
+		const status = message.createDiv({ cls: 'vaultpilot-live-process-panel is-working' });
+		const header = status.createDiv({ cls: 'vaultpilot-live-process-header' });
+		header.createSpan({ cls: 'vaultpilot-process-spinner' });
+		const statusTitle = header.createSpan({ cls: 'vaultpilot-process-title', text: 'Working' });
 		const processEl = status.createDiv({ cls: 'vaultpilot-live-process' });
 		const timelineEl = status.createDiv({ cls: 'vaultpilot-live-timeline' });
 		const answerEl = message.createDiv({ cls: 'vaultpilot-message-markdown markdown-rendered vaultpilot-live-answer' });
@@ -243,12 +242,14 @@ export class VaultPilotView extends ItemView {
 	}
 
 	private appendLiveTimelineEvent(container: HTMLElement, kind: 'running' | 'done' | 'error', title: string, detail: string): HTMLElement {
-		const row = container.createDiv({ cls: `vaultpilot-live-step vaultpilot-live-step-${kind}` });
-		row.createSpan({ cls: 'vaultpilot-live-step-dot' });
-		const body = row.createDiv({ cls: 'vaultpilot-live-step-body' });
+		const row = container.createEl('details', { cls: `vaultpilot-live-step vaultpilot-live-step-${kind}` });
+		row.open = false;
+		const summary = row.createEl('summary', { cls: 'vaultpilot-live-step-summary' });
+		summary.createSpan({ cls: 'vaultpilot-live-step-dot' });
+		const body = summary.createDiv({ cls: 'vaultpilot-live-step-body' });
 		body.createDiv({ cls: 'vaultpilot-live-step-title', text: title });
 		if (detail.trim()) {
-			body.createDiv({ cls: 'vaultpilot-live-step-detail', text: detail.trim() });
+			row.createDiv({ cls: 'vaultpilot-live-step-detail', text: detail.trim() });
 		}
 		return row;
 	}
@@ -269,7 +270,7 @@ export class VaultPilotView extends ItemView {
 		let detailEl = row.querySelector('.vaultpilot-live-step-detail');
 		if (detail.trim()) {
 			if (!(detailEl instanceof HTMLElement)) {
-				detailEl = body.createDiv({ cls: 'vaultpilot-live-step-detail' });
+				detailEl = row.createDiv({ cls: 'vaultpilot-live-step-detail' });
 			}
 			detailEl.setText(detail.trim());
 		} else if (detailEl instanceof HTMLElement) {
@@ -309,12 +310,7 @@ export class VaultPilotView extends ItemView {
 		}
 		if (answer.trace.toolCalls && answer.trace.toolCalls.length > 0) {
 			for (const toolCall of answer.trace.toolCalls) {
-				this.renderProcessLogEntry(
-					log,
-					buildToolLogTitle(toolCall),
-					buildToolLogSummary(toolCall),
-					toolCall.ok ? 'done' : 'error',
-				);
+				this.renderProcessToolCall(log, toolCall);
 			}
 		}
 		if (answer.trace.warnings.length > 0) {
@@ -377,6 +373,38 @@ export class VaultPilotView extends ItemView {
 		if (detail.trim()) {
 			body.createDiv({ cls: 'vaultpilot-process-log-detail', text: detail.trim() });
 		}
+	}
+
+	private renderProcessToolCall(
+		container: HTMLElement,
+		toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number],
+	) {
+		const kind = toolCall.ok ? 'done' : 'error';
+		const details = container.createEl('details', {
+			cls: `vaultpilot-tool-call vaultpilot-process-log-entry-${kind}`,
+		});
+		details.open = false;
+		const summary = details.createEl('summary', { cls: 'vaultpilot-tool-call-summary' });
+		summary.createSpan({ cls: 'vaultpilot-process-log-dot' });
+		const body = summary.createDiv({ cls: 'vaultpilot-tool-call-summary-body' });
+		body.createDiv({ cls: 'vaultpilot-process-log-title', text: buildToolLogTitle(toolCall) });
+		body.createDiv({ cls: 'vaultpilot-tool-call-preview', text: buildToolLogSummary(toolCall) });
+		summary.createSpan({ cls: 'vaultpilot-tool-call-time', text: formatElapsed(toolCall.durationMs) });
+
+		const detail = details.createDiv({ cls: 'vaultpilot-tool-call-detail' });
+		this.renderToolCallDetailRow(detail, 'Result', buildToolLogSummary(toolCall));
+		if (toolCall.input.trim()) {
+			this.renderToolCallDetailRow(detail, 'Input', toolCall.input);
+		}
+		if (toolCall.error) {
+			this.renderToolCallDetailRow(detail, 'Error', toolCall.error);
+		}
+	}
+
+	private renderToolCallDetailRow(container: HTMLElement, label: string, value: string) {
+		const row = container.createDiv({ cls: 'vaultpilot-tool-call-detail-row' });
+		row.createDiv({ cls: 'vaultpilot-tool-call-detail-label', text: label });
+		row.createDiv({ cls: 'vaultpilot-tool-call-detail-value', text: value });
 	}
 
 	private renderProcessTextBlock(container: HTMLElement, text: string) {
