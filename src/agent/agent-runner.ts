@@ -1,6 +1,6 @@
 import { SearchResult } from '../rag/types';
 import { ChatClientOptions } from '../llm/chat';
-import { ChatMessage, completeChatWithTools } from '../llm/chat';
+import { ChatMessage, completeChatText, completeChatWithTools } from '../llm/chat';
 import { ToolContext, AgentRunRequest, AgentRunResult, ToolExecutionResult } from './types';
 import { ToolExecutor } from './tool-executor';
 import { ToolRegistry } from './tool-registry';
@@ -24,6 +24,7 @@ export class AgentRunner {
 		const toolResults: ToolExecutionResult[] = [];
 		const process: string[] = [];
 		const maxSteps = request.maxSteps;
+		await this.emitInitialProcess(request, process);
 
 		for (let step = 0; maxSteps === undefined || step < maxSteps; step += 1) {
 			const stepStartedAt = Date.now();
@@ -134,6 +135,23 @@ export class AgentRunner {
 		request.onStatus?.(label);
 		request.onEvent?.({ type: 'status', label });
 	}
+
+	private async emitInitialProcess(request: AgentRunRequest, process: string[]): Promise<void> {
+		try {
+			const note = await completeChatText(this.chatOptions, [
+				{ role: 'system', content: buildProgressPrompt() },
+				{ role: 'user', content: request.question },
+			]);
+			const cleaned = cleanProgressNote(note);
+			if (!cleaned) {
+				return;
+			}
+			process.push(cleaned);
+			request.onEvent?.({ type: 'process', delta: cleaned });
+		} catch (error) {
+			console.debug('VaultPilot progress note generation failed.', error);
+		}
+	}
 }
 
 function buildSystemPrompt(): string {
@@ -152,6 +170,24 @@ function buildSystemPrompt(): string {
 		'For category-count questions inside a folder, call classify_folder_files. Do not estimate semantic category counts from inspect_folder alone.',
 		'Do not claim a rewritten query or search plan is vault evidence.',
 	].join('\n');
+}
+
+function buildProgressPrompt(): string {
+	return [
+		'You are VaultPilot, an Obsidian knowledge agent.',
+		'Write exactly one short user-facing progress sentence before inspecting the vault.',
+		'Describe what you are about to check, using the user language.',
+		'Do not reveal hidden reasoning. Do not mention tools, JSON, implementation details, or citations.',
+		'Do not answer the question.',
+	].join('\n');
+}
+
+function cleanProgressNote(note: string): string {
+	return note
+		.replace(/^["'\s]+|["'\s]+$/gu, '')
+		.replace(/\s+/gu, ' ')
+		.trim()
+		.slice(0, 180);
 }
 
 function toModelToolOutput(result: ToolExecutionResult): unknown {

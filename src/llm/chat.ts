@@ -250,6 +250,36 @@ export async function completeChatWithTools(
 	};
 }
 
+export async function completeChatText(
+	options: ChatClientOptions,
+	messages: ChatMessage[],
+): Promise<string> {
+	const { endpoint, model } = await resolveChatTarget(options);
+	const response = await requestUrl({
+		url: endpoint,
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${options.settings.apiKey.trim()}`,
+		},
+		body: JSON.stringify({
+			model,
+			messages,
+			temperature: 0.2,
+			stream: false,
+		}),
+	});
+
+	if (response.status < 200 || response.status >= 300) {
+		throw new Error(`Chat text HTTP ${response.status}: ${response.text.slice(0, 240)}`);
+	}
+
+	const data = response.json as {
+		choices?: Array<{ message?: { content?: string | null } }>;
+	};
+	return data.choices?.[0]?.message?.content?.trim() ?? '';
+}
+
 export async function completeChatStream(
 	options: ChatClientOptions,
 	messages: ChatMessage[],
