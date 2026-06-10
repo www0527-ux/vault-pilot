@@ -11,6 +11,7 @@ import { ToolExecutor } from './agent/tool-executor';
 import { ToolRegistry } from './agent/tool-registry';
 import { ToolExecutionResult } from './agent/types';
 import { createDefaultTools } from './agent/tools';
+import { MemoryStore, parseMemoryRequest } from './memory/memory-store';
 import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
 import { buildRuleBasedRewrite } from './rag/query-rewrite';
@@ -47,9 +48,11 @@ export default class VaultPilotPlugin extends Plugin {
 	retrievalService!: RetrievalService;
 	toolRegistry!: ToolRegistry;
 	toolExecutor!: ToolExecutor;
+	memoryStore!: MemoryStore;
 
 	async onload() {
 		await this.loadSettings();
+		this.memoryStore = new MemoryStore(this.app.vault);
 		this.indexManager = new IndexManager(this.app.vault, () => this.getEmbeddingSettings());
 		this.vaultNoteService = new VaultNoteService(this.app);
 		this.retrievalService = new RetrievalService(this);
@@ -113,6 +116,14 @@ export default class VaultPilotPlugin extends Plugin {
 			},
 		});
 
+		this.addCommand({
+			id: 'open-memory',
+			name: 'Open memory',
+			callback: async () => {
+				await this.openMemoryFile();
+			},
+		});
+
 		this.addSettingTab(new VaultPilotSettingTab(this.app, this));
 	}
 
@@ -153,6 +164,11 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 
 	async answerQuestion(question: string): Promise<AgentAnswer> {
+		const memory = parseMemoryRequest(question);
+		if (memory) {
+			return this.remember(memory, question);
+		}
+
 		if (this.canUseToolCalling()) {
 			try {
 				return await this.answerQuestionWithTools(question);
@@ -175,6 +191,7 @@ export default class VaultPilotPlugin extends Plugin {
 					results,
 					activeFile,
 					activeContent,
+					await this.readMemoryContext(),
 				);
 				const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
 				return { answer: cleaned.answer, results, mode: 'remote', trace: addModelProcess(trace, cleaned.process) };
@@ -192,6 +209,11 @@ export default class VaultPilotPlugin extends Plugin {
 	}
 
 	async streamAnswerQuestion(question: string, onEvent: (event: AgentStreamEvent) => void): Promise<AgentAnswer> {
+		const memory = parseMemoryRequest(question);
+		if (memory) {
+			return this.remember(memory, question);
+		}
+
 		if (this.settings.provider === 'local') {
 			onEvent({ type: 'status', label: 'Searching notes' });
 			const { activeFile, results, trace } = await this.prepareQuestion(question);
@@ -234,6 +256,7 @@ export default class VaultPilotPlugin extends Plugin {
 				results,
 				activeFile,
 				activeContent,
+				await this.readMemoryContext(),
 				(event) => {
 					if (event.type === 'process') {
 						onEvent({ type: 'process', delta: event.delta });
@@ -257,6 +280,7 @@ export default class VaultPilotPlugin extends Plugin {
 					results,
 					activeFile,
 					activeContent,
+					await this.readMemoryContext(),
 				);
 				const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
 				return {
@@ -326,7 +350,7 @@ export default class VaultPilotPlugin extends Plugin {
 				maxResults: this.settings.maxResults,
 			},
 		);
-		const result = await runner.run({ question, onEvent });
+		const result = await runner.run({ question, memoryContext: await this.readMemoryContext(), onEvent });
 		return {
 			answer: result.answer,
 			results: result.results,
@@ -393,6 +417,34 @@ export default class VaultPilotPlugin extends Plugin {
 			trace: addTraceWarning(trace, message),
 			warning: message,
 		};
+	}
+
+	private async remember(memory: string, question: string): Promise<AgentAnswer> {
+		await this.memoryStore.append(memory);
+		new Notice('VaultPilot memory saved.');
+		return {
+			answer: `已记住：${memory}`,
+			results: [],
+			mode: 'local',
+			trace: buildMemoryTrace(question),
+		};
+	}
+
+	private async readMemoryContext(): Promise<string> {
+		try {
+			return await this.memoryStore.read();
+		} catch (error) {
+			console.debug('VaultPilot memory read failed.', error);
+			return '';
+		}
+	}
+
+	private async openMemoryFile(): Promise<void> {
+		await this.memoryStore.read();
+		const file = this.app.vault.getAbstractFileByPath(this.memoryStore.getPath());
+		if (file instanceof TFile) {
+			await this.app.workspace.getLeaf(false).openFile(file);
+		}
 	}
 
 	private async rewriteQuestion(question: string, activeFile: TFile | null, activeContent: string): Promise<QueryRewrite> {
@@ -497,6 +549,25 @@ function buildTrace(
 			totalMs,
 		},
 		warnings: rewrite.warning ? [rewrite.warning] : [],
+	};
+}
+
+function buildMemoryTrace(question: string): ResponseTrace {
+	return {
+		originalQuestion: question,
+		rewrittenQuery: '',
+		rewriteMethod: 'rule-based',
+		retrievalMode: 'Memory update',
+		sourceCount: 0,
+		sources: [],
+		confidenceSummary: 'Saved to VaultPilot memory.',
+		modelProcess: ['Saved a user-provided memory entry.'],
+		timings: {
+			understandingMs: 0,
+			retrievalMs: 0,
+			totalMs: 0,
+		},
+		warnings: [],
 	};
 }
 

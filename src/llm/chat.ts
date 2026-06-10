@@ -167,8 +167,9 @@ export async function callRemoteModel(
 	results: SearchResult[],
 	activeFile: TFile | null,
 	activeContent: string,
+	memoryContext = '',
 ): Promise<RemoteModelAnswer> {
-	const { endpoint, body } = await buildChatRequest(options, question, results, activeFile, activeContent, false);
+	const { endpoint, body } = await buildChatRequest(options, question, results, activeFile, activeContent, memoryContext, false);
 
 	const response = await requestUrl({
 		url: endpoint,
@@ -316,9 +317,10 @@ export async function callRemoteModelStream(
 	results: SearchResult[],
 	activeFile: TFile | null,
 	activeContent: string,
+	memoryContext: string,
 	onEvent: (event: RemoteStreamEvent) => void,
 ): Promise<RemoteModelAnswer> {
-	const { endpoint, body } = await buildChatRequest(options, question, results, activeFile, activeContent, true);
+	const { endpoint, body } = await buildChatRequest(options, question, results, activeFile, activeContent, memoryContext, true);
 	const response = await window.fetch(endpoint, {
 		method: 'POST',
 		headers: {
@@ -384,6 +386,7 @@ async function buildChatRequest(
 	results: SearchResult[],
 	activeFile: TFile | null,
 	activeContent: string,
+	memoryContext: string,
 	stream: boolean,
 ): Promise<{ endpoint: string; body: Record<string, unknown> }> {
 	const { endpoint, model } = await resolveChatTarget(options);
@@ -407,6 +410,7 @@ async function buildChatRequest(
 	const current = activeFile ? `Current note: ${activeFile.path}\n${activeContent.slice(0, 2000)}` : '';
 	const prompt = [
 		'You are VaultPilot, an Obsidian knowledge agent.',
+		formatMemoryContext(memoryContext),
 		'Answer using only the supplied notes. Cite note paths in square brackets.',
 		'If the notes are insufficient, say what is missing and suggest what to search next.',
 		'Put no planning, analysis, source-selection narrative, or hidden reasoning in the final answer.',
@@ -479,6 +483,17 @@ function parseToolArguments(args: string): unknown {
 	} catch {
 		return { raw: args };
 	}
+}
+
+function formatMemoryContext(memoryContext: string): string {
+	const cleaned = memoryContext.trim();
+	if (!cleaned) {
+		return '';
+	}
+	return [
+		'Saved VaultPilot memory follows. Treat it as user preferences and project context, not note evidence.',
+		cleaned,
+	].join('\n\n');
 }
 
 function looksLikeTextToolCall(content: string): boolean {
