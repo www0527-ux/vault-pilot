@@ -37,6 +37,10 @@ export class VaultPilotView extends ItemView {
 		return 'VaultPilot';
 	}
 
+	getCurrentThreadId(): string | null {
+		return this.threadId;
+	}
+
 	getIcon() {
 		return 'bot';
 	}

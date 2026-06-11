@@ -69,6 +69,10 @@ export class ThreadStore {
 		return this.vault.adapter.read(this.summaryPath(threadId));
 	}
 
+	getSummaryPath(threadId: string): string {
+		return this.summaryPath(threadId);
+	}
+
 	async searchThreads(query: string, limit = 5): Promise<ThreadSearchResult[]> {
 		const cleaned = query.trim();
 		if (!cleaned || !(await this.vault.adapter.exists(THREADS_DIR))) {

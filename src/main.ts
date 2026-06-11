@@ -145,6 +145,14 @@ export default class VaultPilotPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'open-current-thread-summary',
+			name: 'Open current thread summary',
+			callback: async () => {
+				await this.openCurrentThreadSummary();
+			},
+		});
+
+		this.addCommand({
 			id: 'start-ollama',
 			name: 'Start Ollama',
 			callback: async () => {
@@ -510,6 +518,21 @@ export default class VaultPilotPlugin extends Plugin {
 		if (file instanceof TFile) {
 			await this.app.workspace.getLeaf(false).openFile(file);
 		}
+	}
+
+	private async openCurrentThreadSummary(): Promise<void> {
+		const threadId = this.getVaultPilotView()?.getCurrentThreadId();
+		if (!threadId) {
+			new Notice('No active VaultPilot thread yet. Ask a question first.');
+			return;
+		}
+		await this.threadStore.updateSummary(threadId);
+		const file = this.app.vault.getAbstractFileByPath(this.threadStore.getSummaryPath(threadId));
+		if (file instanceof TFile) {
+			await this.app.workspace.getLeaf(false).openFile(file);
+			return;
+		}
+		new Notice('Current VaultPilot thread summary was not found.');
 	}
 
 	private async startOllama(): Promise<void> {
