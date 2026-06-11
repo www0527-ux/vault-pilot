@@ -41,6 +41,23 @@ import { VaultPilotView, VIEW_TYPE_VAULTPILOT } from './ui/view';
 const RETRIEVAL_MODE_LABEL = 'Hybrid retrieval - BM25 0.3 / Embedding 0.7';
 const MIN_USABLE_TOP_SCORE = 0.25;
 
+interface ChildProcessModule {
+	spawn(command: string, args: string[], options: {
+		detached: boolean;
+		stdio: 'ignore';
+		windowsHide: boolean;
+	}): { unref?: () => void };
+}
+
+interface NodeProcessModule {
+	platform?: string;
+	env?: Record<string, string | undefined>;
+}
+
+interface NodeRequireWindow extends Window {
+	require?: (id: string) => unknown;
+}
+
 export default class VaultPilotPlugin extends Plugin {
 	settings!: VaultPilotSettings;
 	indexManager!: IndexManager;
@@ -121,6 +138,22 @@ export default class VaultPilotPlugin extends Plugin {
 			name: 'Open memory',
 			callback: async () => {
 				await this.openMemoryFile();
+			},
+		});
+
+		this.addCommand({
+			id: 'start-ollama',
+			name: 'Start Ollama',
+			callback: async () => {
+				await this.startOllama();
+			},
+		});
+
+		this.addCommand({
+			id: 'check-ollama-status',
+			name: 'Check Ollama status',
+			callback: async () => {
+				await this.checkOllamaStatus();
 			},
 		});
 
@@ -460,6 +493,89 @@ export default class VaultPilotPlugin extends Plugin {
 		}
 	}
 
+	private async startOllama(): Promise<void> {
+		const running = await this.getOllamaStatus();
+		if (running.ok) {
+			new Notice(`Ollama is already running (${running.modelCount} model${running.modelCount === 1 ? '' : 's'}).`);
+			return;
+		}
+
+		try {
+			const started = this.spawnOllamaServe();
+			if (!started) {
+				new Notice('Could not start Ollama from Obsidian. Start the Ollama app or add ollama to PATH.');
+				return;
+			}
+			new Notice('Starting Ollama...');
+			await sleep(1800);
+			const status = await this.getOllamaStatus();
+			new Notice(status.ok
+				? `Ollama started (${status.modelCount} model${status.modelCount === 1 ? '' : 's'}).`
+				: 'Ollama start command ran, but the API is not responding yet.');
+		} catch (error) {
+			console.error(error);
+			new Notice(`Could not start Ollama: ${error instanceof Error ? error.message : String(error)}`);
+		}
+	}
+
+	private async checkOllamaStatus(): Promise<void> {
+		const status = await this.getOllamaStatus();
+		if (!status.ok) {
+			new Notice(`Ollama is not responding: ${status.message}`);
+			return;
+		}
+		new Notice(`Ollama is running (${status.modelCount} model${status.modelCount === 1 ? '' : 's'}).`);
+	}
+
+	private async getOllamaStatus(): Promise<{ ok: true; modelCount: number } | { ok: false; message: string }> {
+		try {
+			const response = await fetchWithTimeout(this.getOllamaTagsEndpoint(), 2500);
+			if (!response.ok) {
+				return { ok: false, message: `HTTP ${response.status}` };
+			}
+			const data = await response.json() as { models?: unknown[] };
+			return { ok: true, modelCount: Array.isArray(data.models) ? data.models.length : 0 };
+		} catch (error) {
+			return { ok: false, message: error instanceof Error ? error.message : String(error) };
+		}
+	}
+
+	private getOllamaTagsEndpoint(): string {
+		try {
+			const url = new URL(this.settings.embeddingEndpoint);
+			url.pathname = '/api/tags';
+			url.search = '';
+			url.hash = '';
+			return url.toString();
+		} catch {
+			return 'http://localhost:11434/api/tags';
+		}
+	}
+
+	private spawnOllamaServe(): boolean {
+		const nodeRequire = getNodeRequire();
+		if (!nodeRequire) {
+			return false;
+		}
+		const childProcess = nodeRequire('child_process') as ChildProcessModule;
+		const processModule = nodeRequire('process') as NodeProcessModule;
+		const commands = getOllamaCommands(processModule);
+		for (const command of commands) {
+			try {
+				const child = childProcess.spawn(command, ['serve'], {
+					detached: true,
+					stdio: 'ignore',
+					windowsHide: true,
+				});
+				child.unref?.();
+				return true;
+			} catch (error) {
+				console.debug('VaultPilot could not spawn Ollama.', error);
+			}
+		}
+		return false;
+	}
+
 	private async rewriteQuestion(question: string, activeFile: TFile | null, activeContent: string): Promise<QueryRewrite> {
 		if (this.settings.provider === 'local' || !this.settings.apiKey.trim()) {
 			return buildRuleBasedRewrite(question, activeFile, activeContent);
@@ -658,6 +774,36 @@ function addModelProcess(trace: ResponseTrace, process: string[]): ResponseTrace
 		...trace,
 		modelProcess: [...trace.modelProcess, ...process],
 	};
+}
+
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response> {
+	const controller = new AbortController();
+	const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+	try {
+		return await window.fetch(url, { signal: controller.signal });
+	} finally {
+		window.clearTimeout(timeout);
+	}
+}
+
+function getNodeRequire(): ((id: string) => unknown) | null {
+	const nodeWindow = window as NodeRequireWindow;
+	return typeof nodeWindow.require === 'function' ? nodeWindow.require.bind(window) : null;
+}
+
+function getOllamaCommands(processModule: NodeProcessModule): string[] {
+	const commands = ['ollama'];
+	if (processModule.platform === 'win32') {
+		const localAppData = processModule.env?.LOCALAPPDATA;
+		if (localAppData) {
+			commands.push(`${localAppData}\\Programs\\Ollama\\ollama.exe`);
+		}
+	}
+	return commands;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function summarizeToolInput(input: unknown): string {
