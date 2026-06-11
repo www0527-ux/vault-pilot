@@ -17,6 +17,7 @@ export class VaultPilotView extends ItemView {
 	private messagesEl!: HTMLElement;
 	private indexStatusEl!: HTMLElement;
 	private conversationTurns: ConversationTurn[] = [];
+	private threadId: string | null = null;
 	private latestIndexStats: IndexStats | null = null;
 	private stopIndexListener: (() => void) | null = null;
 	private statusTimer: number | null = null;
@@ -101,6 +102,8 @@ export class VaultPilotView extends ItemView {
 		let liveProcess = '';
 		const activeToolRows = new Map<string, HTMLElement[]>();
 		const conversationContext = this.buildConversationContext();
+		const threadId = await this.ensureThread(question);
+		void this.plugin.threadStore.appendEvent(threadId, { type: 'user', content: question });
 
 		const answer = await this.plugin.streamAnswerQuestion(question, conversationContext, (event) => {
 			if (event.type === 'assistant_prelude') {
@@ -144,6 +147,11 @@ export class VaultPilotView extends ItemView {
 			}
 			if (event.type === 'tool_start') {
 				const title = buildToolActivityTitle(event.name, event.inputSummary);
+				void this.plugin.threadStore.appendEvent(threadId, {
+					type: 'tool_start',
+					name: event.name,
+					inputSummary: event.inputSummary,
+				});
 				this.updateLiveStatus(live.statusTitle, title);
 				const row = this.appendLiveTimelineEvent(
 					live.timelineEl,
@@ -158,6 +166,14 @@ export class VaultPilotView extends ItemView {
 				return;
 			}
 			if (event.type === 'tool_result') {
+				void this.plugin.threadStore.appendEvent(threadId, {
+					type: 'tool_result',
+					name: event.name,
+					ok: event.ok,
+					summary: event.summary,
+					durationMs: event.durationMs,
+					error: event.error,
+				});
 				const rows = activeToolRows.get(event.name) ?? [];
 				const row = rows.shift();
 				if (rows.length === 0) {
@@ -184,6 +200,7 @@ export class VaultPilotView extends ItemView {
 			this.scrollMessagesToBottom();
 		});
 		await this.renderAssistantAnswer(loading, answer);
+		void this.plugin.threadStore.appendEvent(threadId, { type: 'assistant', content: answer.answer });
 		this.rememberConversationTurn(question, answer.answer);
 		this.scrollMessagesToBottom();
 	}
@@ -210,6 +227,13 @@ export class VaultPilotView extends ItemView {
 		message.setText(text);
 		this.scrollMessagesToBottom();
 		return message;
+	}
+
+	private async ensureThread(initialQuestion: string): Promise<string> {
+		if (!this.threadId) {
+			this.threadId = await this.plugin.threadStore.createThread(initialQuestion);
+		}
+		return this.threadId;
 	}
 
 	private buildConversationContext(): string {

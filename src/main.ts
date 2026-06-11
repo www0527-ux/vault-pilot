@@ -12,6 +12,7 @@ import { ToolRegistry } from './agent/tool-registry';
 import { ToolExecutionResult } from './agent/types';
 import { createDefaultTools } from './agent/tools';
 import { MemoryStore, parseMemoryRequest } from './memory/memory-store';
+import { ThreadStore } from './memory/thread-store';
 import { IndexManager } from './rag/index-manager';
 import { buildLocalAnswer } from './rag/local-answer';
 import { buildRuleBasedRewrite } from './rag/query-rewrite';
@@ -66,10 +67,12 @@ export default class VaultPilotPlugin extends Plugin {
 	toolRegistry!: ToolRegistry;
 	toolExecutor!: ToolExecutor;
 	memoryStore!: MemoryStore;
+	threadStore!: ThreadStore;
 
 	async onload() {
 		await this.loadSettings();
 		this.memoryStore = new MemoryStore(this.app.vault);
+		this.threadStore = new ThreadStore(this.app.vault);
 		this.indexManager = new IndexManager(this.app.vault, () => this.getEmbeddingSettings());
 		this.vaultNoteService = new VaultNoteService(this.app);
 		this.retrievalService = new RetrievalService(this);
