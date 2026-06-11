@@ -16,6 +16,8 @@ const DEFAULT_MEMORY = `# VaultPilot Memory
 ## Archived
 `;
 
+type MemoryScope = 'preference' | 'environment' | 'project' | 'decision' | 'vaultpilot-ui';
+
 export type MemoryRequest =
 	| { type: 'remember'; content: string }
 	| { type: 'forget'; content: string };
@@ -43,14 +45,15 @@ export class MemoryStore {
 			return;
 		}
 		const current = await this.read();
+		const scope = inferMemoryScope(cleaned);
 		const entry = formatMemoryEntry({
 			id: createMemoryId(),
 			status: 'active',
-			scope: inferMemoryScope(cleaned),
+			scope,
 			updated: formatDate(new Date()),
 			content: cleaned,
 		});
-		await this.vault.adapter.write(MEMORY_PATH, insertUnderHeading(current, '## Preferences', entry));
+		await this.vault.adapter.write(MEMORY_PATH, insertUnderHeading(current, headingForScope(scope), entry));
 	}
 
 	async forget(query: string): Promise<number> {
@@ -118,7 +121,7 @@ export function parseMemoryRequest(question: string): MemoryRequest | null {
 interface MemoryEntry {
 	id: string;
 	status: 'active' | 'archived';
-	scope: string;
+	scope: MemoryScope;
 	updated: string;
 	content: string;
 }
@@ -154,7 +157,23 @@ function insertUnderHeading(document: string, heading: string, entry: string): s
 	return `${document.slice(0, insertAt)}\n${entry}${document.slice(insertAt).replace(/^\s*/u, '\n')}`;
 }
 
-function inferMemoryScope(content: string): string {
+function headingForScope(scope: MemoryScope): string {
+	if (scope === 'environment') {
+		return '## Environment';
+	}
+	if (scope === 'project' || scope === 'vaultpilot-ui') {
+		return '## Project Facts';
+	}
+	if (scope === 'decision') {
+		return '## Confirmed Decisions';
+	}
+	return '## Preferences';
+}
+
+function inferMemoryScope(content: string): MemoryScope {
+	if (/\u51b3\u5b9a|\u786e\u8ba4|\u65b9\u6848|decision|decided|confirmed/iu.test(content)) {
+		return 'decision';
+	}
 	if (/ui|\u754c\u9762|\u4ea4\u4e92|codex|process|tool/iu.test(content)) {
 		return 'vaultpilot-ui';
 	}
