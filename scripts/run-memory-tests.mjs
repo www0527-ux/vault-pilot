@@ -6,21 +6,19 @@ import { spawn } from 'node:child_process';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const outdir = resolve(root, '.tmp', 'memory-tests');
-const outfile = resolve(outdir, 'memory-document.test.mjs');
+const outfiles = [
+	'memory-document.test.mjs',
+	'context-router.test.mjs',
+].map((name) => resolve(outdir, name));
 
 await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
-await build({
-	entryPoints: [resolve(root, 'src', 'memory', 'memory-document.test.ts')],
-	outfile,
-	bundle: true,
-	format: 'esm',
-	platform: 'node',
-	target: 'node20',
-	sourcemap: 'inline',
-});
+await Promise.all([
+	buildTest('memory-document.test.ts', outfiles[0]),
+	buildTest('context-router.test.ts', outfiles[1]),
+]);
 
-const child = spawn(process.execPath, ['--test', outfile], {
+const child = spawn(process.execPath, ['--test', ...outfiles], {
 	cwd: root,
 	stdio: 'inherit',
 });
@@ -31,3 +29,15 @@ const code = await new Promise((resolveExit) => {
 
 await rm(outdir, { recursive: true, force: true });
 process.exitCode = code;
+
+function buildTest(entry, outfile) {
+	return build({
+		entryPoints: [resolve(root, 'src', 'memory', entry)],
+		outfile,
+		bundle: true,
+		format: 'esm',
+		platform: 'node',
+		target: 'node20',
+		sourcemap: 'inline',
+	});
+}
