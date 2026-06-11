@@ -106,7 +106,7 @@ export class VaultPilotView extends ItemView {
 		const conversationContext = await this.buildConversationContext(threadId, question);
 		void this.plugin.threadStore.appendEvent(threadId, { type: 'user', content: question });
 
-		const answer = await this.plugin.streamAnswerQuestion(question, conversationContext, (event) => {
+		const answer = await this.plugin.streamAnswerQuestion(question, conversationContext, threadId, (event) => {
 			if (event.type === 'assistant_prelude') {
 				liveProcess += event.text;
 				this.updateLiveProcess(live.processEl, liveProcess);
@@ -614,6 +614,18 @@ function buildToolLogTitle(toolCall: NonNullable<AgentAnswer['trace']['toolCalls
 	if (toolCall.name === 'suggest_links') {
 		return toolCall.ok ? 'Found related notes' : 'Could not find related notes';
 	}
+	if (toolCall.name === 'read_profile') {
+		return toolCall.ok ? 'Read memory' : 'Could not read memory';
+	}
+	if (toolCall.name === 'remember_profile') {
+		return toolCall.ok ? 'Saved memory' : 'Could not save memory';
+	}
+	if (toolCall.name === 'forget_profile') {
+		return toolCall.ok ? 'Archived memory' : 'Could not archive memory';
+	}
+	if (toolCall.name === 'read_thread_summary') {
+		return toolCall.ok ? 'Read thread summary' : 'Could not read thread summary';
+	}
 	return `${toolCall.ok ? 'Used' : 'Failed'} ${formatToolName(toolCall.name)}`;
 }
 
@@ -678,6 +690,18 @@ function buildToolActivityTitle(name: string, inputSummary: string): string {
 	if (name === 'suggest_links') {
 		return 'Finding related notes';
 	}
+	if (name === 'read_profile') {
+		return 'Reading memory';
+	}
+	if (name === 'remember_profile') {
+		return 'Saving memory';
+	}
+	if (name === 'forget_profile') {
+		return 'Archiving memory';
+	}
+	if (name === 'read_thread_summary') {
+		return 'Reading thread summary';
+	}
 	return `Using ${formatToolName(name)}`;
 }
 
@@ -713,6 +737,18 @@ function buildToolResultTitle(name: string, ok: boolean): string {
 	}
 	if (name === 'suggest_links') {
 		return ok ? 'Finished finding related notes' : 'Could not find related notes';
+	}
+	if (name === 'read_profile') {
+		return ok ? 'Finished reading memory' : 'Could not read memory';
+	}
+	if (name === 'remember_profile') {
+		return ok ? 'Finished saving memory' : 'Could not save memory';
+	}
+	if (name === 'forget_profile') {
+		return ok ? 'Finished archiving memory' : 'Could not archive memory';
+	}
+	if (name === 'read_thread_summary') {
+		return ok ? 'Finished reading thread summary' : 'Could not read thread summary';
 	}
 	return `${action} ${formatToolName(name)}`;
 }

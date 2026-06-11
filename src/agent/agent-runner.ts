@@ -185,11 +185,16 @@ function buildSystemPrompt(memoryContext?: string, conversationContext?: string)
 		formatMemoryContext(memoryContext),
 		formatConversationContext(conversationContext),
 		'Use tools when the answer depends on the user vault, the current note, note contents, or related links.',
+		'Memory tools are for user-editable preferences, environment facts, project facts, decisions, and conversation recall. They are not vault evidence.',
+		'Use read_profile or read_thread_summary when the user asks to recall saved preferences, earlier conversation, or what was decided before.',
+		'Use remember_profile, forget_profile, or memory-changing tools only when the user explicitly asks to remember, save, update, forget, remove, delete, or correct memory.',
+		'Never save ordinary chat content to profile memory without explicit user intent.',
 		'Tool paths must be vault-relative paths. If the user gives an absolute filesystem path, convert it to the path relative to the vault before calling tools.',
 		'When calling search_notes, provide retrieval-ready query parameters yourself.',
 		'Preserve exact entities from the user request. For complex questions, provide several focused queries.',
 		'If helpful before using tools, write one brief user-facing progress sentence in assistant content. Do not expose hidden reasoning.',
-		'After tool results arrive, answer using only the tool-provided vault evidence. Cite note paths in square brackets.',
+		'After vault tool results arrive, answer factual vault questions using only the tool-provided vault evidence. Cite note paths in square brackets.',
+		'Do not cite memory or conversation summaries as note evidence.',
 		'If the tool results are insufficient, say what is missing and suggest what to search next.',
 		'Do not keep calling tools just to exhaustively inspect every candidate. Once the evidence is enough to answer, stop using tools and write the answer.',
 		'For broad project or documentation-summary questions, summarize the main themes from representative search results and only read specific notes when excerpts are not enough.',
@@ -317,6 +322,15 @@ function summarizeToolInput(name: string, input: unknown): string {
 		const category = typeof input.category === 'string' ? input.category.trim() : '';
 		return `${path || 'vault root'}: ${category}`;
 	}
+	if (name === 'remember_profile') {
+		return typeof input.content === 'string' ? input.content.trim().slice(0, 160) : '';
+	}
+	if (name === 'forget_profile') {
+		return typeof input.query === 'string' ? input.query.trim().slice(0, 160) : '';
+	}
+	if (name === 'read_thread_summary') {
+		return typeof input.threadId === 'string' && input.threadId.trim() ? input.threadId.trim() : 'current thread';
+	}
 	return '';
 }
 
@@ -352,6 +366,21 @@ function summarizeToolResult(result: ToolExecutionResult): string {
 	if (result.call.name === 'suggest_links' && result.results) {
 		const count = result.results.length;
 		return `Suggested ${count} related note${count === 1 ? '' : 's'}`;
+	}
+	if (result.call.name === 'read_profile') {
+		return 'Read profile memory';
+	}
+	if (result.call.name === 'remember_profile' && isRecord(result.output)) {
+		const saved = typeof result.output.saved === 'string' ? result.output.saved : '';
+		return saved ? `Saved memory: ${saved}` : 'Saved profile memory';
+	}
+	if (result.call.name === 'forget_profile' && isRecord(result.output)) {
+		const archived = typeof result.output.archived === 'number' ? result.output.archived : 0;
+		return `Archived ${archived} memor${archived === 1 ? 'y' : 'ies'}`;
+	}
+	if (result.call.name === 'read_thread_summary' && isRecord(result.output)) {
+		const threadId = typeof result.output.threadId === 'string' ? result.output.threadId : 'current thread';
+		return `Read thread summary: ${threadId}`;
 	}
 	return 'Completed';
 }

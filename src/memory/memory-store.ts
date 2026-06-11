@@ -96,13 +96,13 @@ export class MemoryStore {
 export function parseMemoryRequest(question: string): MemoryRequest | null {
 	const trimmed = question.trim();
 	const rememberPatterns = [
-		/^(?:\u8bf7)?\u8bb0\u4f4f[:\uff1a,，\s]*(.+)$/u,
-		/^remember(?: that)?[:：,，\s]+(.+)$/iu,
-		/^save (?:this )?(?:memory|preference)[:：,，\s]+(.+)$/iu,
+		/^(?:\u8bf7)?\u8bb0\u4f4f[\s:：,，]*(.+)$/u,
+		/^remember(?: that)?[\s:]+(.+)$/iu,
+		/^save (?:this )?(?:memory|preference)[\s:]+(.+)$/iu,
 	];
 	const forgetPatterns = [
-		/^(?:\u8bf7)?(?:\u5fd8\u8bb0|\u5220\u9664\u8bb0\u5fc6|\u79fb\u9664\u8bb0\u5fc6)[:\uff1a,，\s]*(.+)$/u,
-		/^(?:forget|remove memory|delete memory)[:：,，\s]+(.+)$/iu,
+		/^(?:\u8bf7)?(?:\u5fd8\u8bb0|\u5220\u9664\u8bb0\u5fc6|\u79fb\u9664\u8bb0\u5fc6)[\s:：,，]*(.+)$/u,
+		/^(?:forget|remove memory|delete memory)[\s:]+(.+)$/iu,
 	];
 	const remembered = matchFirst(trimmed, rememberPatterns);
 	if (remembered) {
@@ -155,13 +155,13 @@ function insertUnderHeading(document: string, heading: string, entry: string): s
 }
 
 function inferMemoryScope(content: string): string {
-	if (/ui|界面|交互|codex|process|tool/iu.test(content)) {
+	if (/ui|\u754c\u9762|\u4ea4\u4e92|codex|process|tool/iu.test(content)) {
 		return 'vaultpilot-ui';
 	}
-	if (/ollama|deepseek|api|model|embedding|模型/u.test(content)) {
+	if (/ollama|deepseek|api|model|embedding|\u6a21\u578b/iu.test(content)) {
 		return 'environment';
 	}
-	if (/项目|插件|vaultpilot|obsidian/iu.test(content)) {
+	if (/\u9879\u76ee|\u63d2\u4ef6|vaultpilot|obsidian/iu.test(content)) {
 		return 'project';
 	}
 	return 'preference';

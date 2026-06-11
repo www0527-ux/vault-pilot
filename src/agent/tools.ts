@@ -25,8 +25,24 @@ interface ClassifyFolderFilesInput {
 	includeUncertain?: boolean;
 }
 
+interface RememberProfileInput {
+	content?: string;
+}
+
+interface ForgetProfileInput {
+	query?: string;
+}
+
+interface ReadThreadSummaryInput {
+	threadId?: string;
+}
+
 export function createDefaultTools(): AgentTool<unknown, unknown>[] {
 	return [
+		readProfileTool,
+		rememberProfileTool,
+		forgetProfileTool,
+		readThreadSummaryTool,
 		getCurrentNoteTool,
 		inspectFolderTool,
 		classifyFolderFilesTool,
@@ -48,6 +64,111 @@ const getCurrentNoteTool: AgentTool<unknown, unknown> = {
 	async execute(_input: unknown, context: ToolContext) {
 		const note = await context.vaultNotes.getCurrentNote();
 		return note ?? { note: null, message: 'No active Markdown note.' };
+	},
+};
+
+const readProfileTool: AgentTool<unknown, unknown> = {
+	name: 'read_profile',
+	description: [
+		'Read the saved VaultPilot profile memory.',
+		'Use this when the user asks about saved preferences, environment, project decisions, or earlier memory.',
+		'This is not vault evidence.',
+	].join(' '),
+	risk: 'read',
+	schema: {
+		type: 'object',
+		properties: {},
+		additionalProperties: false,
+	},
+	async execute(_input: unknown, context: ToolContext) {
+		return {
+			path: context.memory.getPath(),
+			content: await context.memory.read(),
+		};
+	},
+};
+
+const rememberProfileTool: AgentTool<RememberProfileInput, unknown> = {
+	name: 'remember_profile',
+	description: [
+		'Save a durable user preference, environment fact, project fact, or confirmed decision to VaultPilot profile memory.',
+		'Use only when the user explicitly asks to remember, save, update, or keep something for later.',
+	].join(' '),
+	risk: 'write',
+	schema: {
+		type: 'object',
+		properties: {
+			content: { type: 'string', description: 'The concise memory to save.' },
+		},
+		required: ['content'],
+		additionalProperties: false,
+	},
+	async execute(input: RememberProfileInput, context: ToolContext) {
+		const content = input.content?.trim();
+		if (!content) {
+			throw new Error('remember_profile requires content.');
+		}
+		await context.memory.append(content);
+		return {
+			path: context.memory.getPath(),
+			saved: content,
+		};
+	},
+};
+
+const forgetProfileTool: AgentTool<ForgetProfileInput, unknown> = {
+	name: 'forget_profile',
+	description: [
+		'Archive saved VaultPilot profile memories matching a user-provided query.',
+		'Use only when the user explicitly asks to forget, remove, delete, or correct saved memory.',
+	].join(' '),
+	risk: 'write',
+	schema: {
+		type: 'object',
+		properties: {
+			query: { type: 'string', description: 'Text to match against active memory content.' },
+		},
+		required: ['query'],
+		additionalProperties: false,
+	},
+	async execute(input: ForgetProfileInput, context: ToolContext) {
+		const query = input.query?.trim();
+		if (!query) {
+			throw new Error('forget_profile requires query.');
+		}
+		const archived = await context.memory.forget(query);
+		return {
+			path: context.memory.getPath(),
+			query,
+			archived,
+		};
+	},
+};
+
+const readThreadSummaryTool: AgentTool<ReadThreadSummaryInput, unknown> = {
+	name: 'read_thread_summary',
+	description: [
+		'Read the rolling summary for the current VaultPilot chat thread.',
+		'Use this when the user refers to earlier turns, asks what has happened in this conversation, or asks to resume prior context.',
+		'This is conversation context, not vault evidence.',
+	].join(' '),
+	risk: 'read',
+	schema: {
+		type: 'object',
+		properties: {
+			threadId: { type: 'string', description: 'Optional thread id. Defaults to the current chat thread.' },
+		},
+		additionalProperties: false,
+	},
+	async execute(input: ReadThreadSummaryInput, context: ToolContext) {
+		const threadId = input.threadId?.trim() || context.currentThreadId;
+		if (!threadId) {
+			throw new Error('No current thread is available.');
+		}
+		return {
+			threadId,
+			summary: await context.threads.readSummary(threadId),
+		};
 	},
 };
 

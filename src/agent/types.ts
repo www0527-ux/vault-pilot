@@ -1,4 +1,6 @@
 import { AgentStreamEvent, SearchResult } from '../rag/types';
+import { MemoryStore } from '../memory/memory-store';
+import { ThreadStore } from '../memory/thread-store';
 import { RetrievalService } from '../services/retrieval-service';
 import { VaultNoteService } from '../services/vault-note-service';
 
@@ -23,6 +25,9 @@ export interface ToolDefinition {
 export interface ToolContext {
 	vaultNotes: VaultNoteService;
 	retrieval: RetrievalService;
+	memory: MemoryStore;
+	threads: ThreadStore;
+	currentThreadId?: string;
 	maxResults: number;
 }
 

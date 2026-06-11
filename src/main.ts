@@ -199,7 +199,7 @@ export default class VaultPilotPlugin extends Plugin {
 		return this.indexManager.classifyFolderFiles(options);
 	}
 
-	async answerQuestion(question: string, conversationContext = ''): Promise<AgentAnswer> {
+	async answerQuestion(question: string, conversationContext = '', threadId?: string): Promise<AgentAnswer> {
 		const memory = parseMemoryRequest(question);
 		if (memory) {
 			return this.handleMemoryRequest(memory, question);
@@ -207,7 +207,7 @@ export default class VaultPilotPlugin extends Plugin {
 
 		if (this.canUseToolCalling()) {
 			try {
-				return await this.answerQuestionWithTools(question, undefined, conversationContext);
+				return await this.answerQuestionWithTools(question, undefined, conversationContext, threadId);
 			} catch (error) {
 				console.debug('VaultPilot tool calling failed. Falling back to fixed RAG.', error);
 			}
@@ -248,6 +248,7 @@ export default class VaultPilotPlugin extends Plugin {
 	async streamAnswerQuestion(
 		question: string,
 		conversationContext: string,
+		threadId: string | undefined,
 		onEvent: (event: AgentStreamEvent) => void,
 	): Promise<AgentAnswer> {
 		const memory = parseMemoryRequest(question);
@@ -274,7 +275,7 @@ export default class VaultPilotPlugin extends Plugin {
 		if (this.canUseToolCalling()) {
 			try {
 				onEvent({ type: 'status', label: 'Choosing tools' });
-				const answer = await this.answerQuestionWithTools(question, onEvent, conversationContext);
+				const answer = await this.answerQuestionWithTools(question, onEvent, conversationContext, threadId);
 				return answer;
 			} catch (error) {
 				console.error(error);
@@ -383,6 +384,7 @@ export default class VaultPilotPlugin extends Plugin {
 		question: string,
 		onEvent?: (event: AgentStreamEvent) => void,
 		conversationContext = '',
+		threadId?: string,
 	): Promise<AgentAnswer> {
 		const runner = new AgentRunner(
 			this.getChatClientOptions(),
@@ -391,6 +393,9 @@ export default class VaultPilotPlugin extends Plugin {
 			{
 				vaultNotes: this.vaultNoteService,
 				retrieval: this.retrievalService,
+				memory: this.memoryStore,
+				threads: this.threadStore,
+				currentThreadId: threadId,
 				maxResults: this.settings.maxResults,
 			},
 		);
@@ -847,6 +852,21 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 	}
 	if (result.results) {
 		return `Returned ${result.results.length} result${result.results.length === 1 ? '' : 's'}`;
+	}
+	if (result.call.name === 'read_profile') {
+		return 'Read profile memory';
+	}
+	if (result.call.name === 'remember_profile' && isRecord(result.output)) {
+		const saved = typeof result.output.saved === 'string' ? result.output.saved : '';
+		return saved ? `Saved memory: ${saved}` : 'Saved profile memory';
+	}
+	if (result.call.name === 'forget_profile' && isRecord(result.output)) {
+		const archived = typeof result.output.archived === 'number' ? result.output.archived : 0;
+		return `Archived ${archived} memor${archived === 1 ? 'y' : 'ies'}`;
+	}
+	if (result.call.name === 'read_thread_summary' && isRecord(result.output)) {
+		const threadId = typeof result.output.threadId === 'string' ? result.output.threadId : 'current thread';
+		return `Read thread summary: ${threadId}`;
 	}
 	return 'Completed';
 }
