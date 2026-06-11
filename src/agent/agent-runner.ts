@@ -186,7 +186,8 @@ function buildSystemPrompt(memoryContext?: string, conversationContext?: string)
 		formatConversationContext(conversationContext),
 		'Use tools when the answer depends on the user vault, the current note, note contents, or related links.',
 		'Memory tools are for user-editable preferences, environment facts, project facts, decisions, and conversation recall. They are not vault evidence.',
-		'Use read_profile or read_thread_summary when the user asks to recall saved preferences, earlier conversation, or what was decided before.',
+		'Use read_profile or read_thread_summary when the user asks to recall saved preferences, current-thread conversation, or what was decided before.',
+		'Use search_threads when the user asks about older conversations, distant memories, previous plans, or decisions that may not be in the current thread.',
 		'Use remember_profile, forget_profile, or memory-changing tools only when the user explicitly asks to remember, save, update, forget, remove, delete, or correct memory.',
 		'Never save ordinary chat content to profile memory without explicit user intent.',
 		'Tool paths must be vault-relative paths. If the user gives an absolute filesystem path, convert it to the path relative to the vault before calling tools.',
@@ -331,6 +332,11 @@ function summarizeToolInput(name: string, input: unknown): string {
 	if (name === 'read_thread_summary') {
 		return typeof input.threadId === 'string' && input.threadId.trim() ? input.threadId.trim() : 'current thread';
 	}
+	if (name === 'search_threads') {
+		const query = typeof input.query === 'string' ? input.query.trim() : '';
+		const limit = typeof input.limit === 'number' && Number.isFinite(input.limit) ? `, limit ${input.limit}` : '';
+		return query ? `${query}${limit}` : '';
+	}
 	return '';
 }
 
@@ -381,6 +387,10 @@ function summarizeToolResult(result: ToolExecutionResult): string {
 	if (result.call.name === 'read_thread_summary' && isRecord(result.output)) {
 		const threadId = typeof result.output.threadId === 'string' ? result.output.threadId : 'current thread';
 		return `Read thread summary: ${threadId}`;
+	}
+	if (result.call.name === 'search_threads' && isRecord(result.output)) {
+		const results = Array.isArray(result.output.results) ? result.output.results : [];
+		return `Found ${results.length} thread${results.length === 1 ? '' : 's'}`;
 	}
 	return 'Completed';
 }

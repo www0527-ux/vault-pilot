@@ -868,6 +868,10 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 		const threadId = typeof result.output.threadId === 'string' ? result.output.threadId : 'current thread';
 		return `Read thread summary: ${threadId}`;
 	}
+	if (result.call.name === 'search_threads' && isRecord(result.output)) {
+		const results = Array.isArray(result.output.results) ? result.output.results : [];
+		return `Found ${results.length} thread${results.length === 1 ? '' : 's'}`;
+	}
 	return 'Completed';
 }
 

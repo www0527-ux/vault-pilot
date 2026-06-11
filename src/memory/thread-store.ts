@@ -19,6 +19,17 @@ interface ThreadMetadata {
 	eventCount: number;
 }
 
+export interface ThreadSearchResult {
+	id: string;
+	title: string;
+	createdAt: string;
+	updatedAt: string;
+	eventCount: number;
+	score: number;
+	matches: string[];
+	excerpt: string;
+}
+
 export class ThreadStore {
 	private queues = new Map<string, Promise<void>>();
 
@@ -58,6 +69,32 @@ export class ThreadStore {
 		return this.vault.adapter.read(this.summaryPath(threadId));
 	}
 
+	async searchThreads(query: string, limit = 5): Promise<ThreadSearchResult[]> {
+		const cleaned = query.trim();
+		if (!cleaned || !(await this.vault.adapter.exists(THREADS_DIR))) {
+			return [];
+		}
+		const tokens = tokenize(cleaned);
+		const directories = await this.vault.adapter.list(THREADS_DIR);
+		const results: ThreadSearchResult[] = [];
+		for (const directory of directories.folders) {
+			const threadId = directory.split('/').at(-1);
+			if (!threadId) {
+				continue;
+			}
+			const result = await this.scoreThread(threadId, tokens).catch((error) => {
+				console.debug('VaultPilot thread search skipped a malformed thread.', error);
+				return null;
+			});
+			if (result && result.score > 0) {
+				results.push(result);
+			}
+		}
+		return results
+			.sort((left, right) => right.score - left.score || Date.parse(right.updatedAt) - Date.parse(left.updatedAt))
+			.slice(0, clampLimit(limit));
+	}
+
 	updateSummary(threadId: string): Promise<void> {
 		const queued = (this.queues.get(threadId) ?? Promise.resolve())
 			.then(() => this.writeSummary(threadId))
@@ -89,6 +126,33 @@ export class ThreadStore {
 		const events = parseTranscript(await this.vault.adapter.read(this.transcriptPath(threadId)));
 		const summary = buildRollingSummary(metadata, events);
 		await this.vault.adapter.write(this.summaryPath(threadId), summary);
+	}
+
+	private async scoreThread(threadId: string, tokens: string[]): Promise<ThreadSearchResult | null> {
+		const metadata = JSON.parse(await this.vault.adapter.read(this.metadataPath(threadId))) as ThreadMetadata;
+		if (metadata.status === 'archived') {
+			return null;
+		}
+		const summary = await this.readSummary(threadId);
+		const haystack = `${metadata.title}\n${summary}`;
+		const haystackLower = haystack.toLowerCase();
+		const matches = tokens.filter((token) => haystackLower.includes(token));
+		if (matches.length === 0) {
+			return null;
+		}
+		const titleHits = matches.filter((token) => metadata.title.toLowerCase().includes(token)).length;
+		const recencyBoost = calculateRecencyBoost(metadata.updatedAt);
+		const score = matches.length * 10 + titleHits * 6 + recencyBoost;
+		return {
+			id: metadata.id,
+			title: metadata.title,
+			createdAt: metadata.createdAt,
+			updatedAt: metadata.updatedAt,
+			eventCount: metadata.eventCount,
+			score,
+			matches,
+			excerpt: buildSearchExcerpt(summary, matches),
+		};
 	}
 
 	private async ensureDirectory(path: string): Promise<void> {
@@ -236,6 +300,61 @@ function summarizeText(text: string, maxLength: number): string {
 		return cleaned;
 	}
 	return `${cleaned.slice(0, Math.max(0, maxLength - 3))}...`;
+}
+
+function tokenize(query: string): string[] {
+	const asciiTokens = query
+		.toLowerCase()
+		.match(/[a-z0-9_\-.]+/gu) ?? [];
+	const cjkTokens = query.match(/[\p{Script=Han}]{2,}/gu) ?? [];
+	const shortCjkTokens = cjkTokens.flatMap((token) => {
+		if (token.length <= 4) {
+			return [token];
+		}
+		const pairs: string[] = [];
+		for (let index = 0; index < token.length - 1; index += 1) {
+			pairs.push(token.slice(index, index + 2));
+		}
+		return [token, ...pairs];
+	});
+	return Array.from(new Set([...asciiTokens, ...shortCjkTokens].map((token) => token.trim()).filter((token) => token.length >= 2)));
+}
+
+function calculateRecencyBoost(updatedAt: string): number {
+	const updated = Date.parse(updatedAt);
+	if (!Number.isFinite(updated)) {
+		return 0;
+	}
+	const ageDays = Math.max(0, (Date.now() - updated) / 86400000);
+	if (ageDays <= 1) {
+		return 4;
+	}
+	if (ageDays <= 7) {
+		return 2;
+	}
+	if (ageDays <= 30) {
+		return 1;
+	}
+	return 0;
+}
+
+function buildSearchExcerpt(summary: string, matches: string[]): string {
+	const lines = summary
+		.split(/\r?\n/u)
+		.map((line) => line.trim())
+		.filter((line) => line && !line.startsWith('#'));
+	const matchedLine = lines.find((line) => {
+		const lower = line.toLowerCase();
+		return matches.some((match) => lower.includes(match));
+	});
+	return summarizeText(matchedLine ?? lines[0] ?? '', 260);
+}
+
+function clampLimit(limit: number): number {
+	if (!Number.isFinite(limit)) {
+		return 5;
+	}
+	return Math.max(1, Math.min(Math.round(limit), 12));
 }
 
 function titleFromPrompt(prompt: string): string {

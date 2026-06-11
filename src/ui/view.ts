@@ -626,6 +626,9 @@ function buildToolLogTitle(toolCall: NonNullable<AgentAnswer['trace']['toolCalls
 	if (toolCall.name === 'read_thread_summary') {
 		return toolCall.ok ? 'Read thread summary' : 'Could not read thread summary';
 	}
+	if (toolCall.name === 'search_threads') {
+		return toolCall.ok ? 'Searched past chats' : 'Could not search past chats';
+	}
 	return `${toolCall.ok ? 'Used' : 'Failed'} ${formatToolName(toolCall.name)}`;
 }
 
@@ -702,6 +705,9 @@ function buildToolActivityTitle(name: string, inputSummary: string): string {
 	if (name === 'read_thread_summary') {
 		return 'Reading thread summary';
 	}
+	if (name === 'search_threads') {
+		return 'Searching past chats';
+	}
 	return `Using ${formatToolName(name)}`;
 }
 
@@ -749,6 +755,9 @@ function buildToolResultTitle(name: string, ok: boolean): string {
 	}
 	if (name === 'read_thread_summary') {
 		return ok ? 'Finished reading thread summary' : 'Could not read thread summary';
+	}
+	if (name === 'search_threads') {
+		return ok ? 'Finished searching past chats' : 'Could not search past chats';
 	}
 	return `${action} ${formatToolName(name)}`;
 }

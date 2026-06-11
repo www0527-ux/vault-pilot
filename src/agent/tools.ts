@@ -37,12 +37,18 @@ interface ReadThreadSummaryInput {
 	threadId?: string;
 }
 
+interface SearchThreadsInput {
+	query?: string;
+	limit?: number;
+}
+
 export function createDefaultTools(): AgentTool<unknown, unknown>[] {
 	return [
 		readProfileTool,
 		rememberProfileTool,
 		forgetProfileTool,
 		readThreadSummaryTool,
+		searchThreadsTool,
 		getCurrentNoteTool,
 		inspectFolderTool,
 		classifyFolderFilesTool,
@@ -168,6 +174,35 @@ const readThreadSummaryTool: AgentTool<ReadThreadSummaryInput, unknown> = {
 		return {
 			threadId,
 			summary: await context.threads.readSummary(threadId),
+		};
+	},
+};
+
+const searchThreadsTool: AgentTool<SearchThreadsInput, unknown> = {
+	name: 'search_threads',
+	description: [
+		'Search saved VaultPilot chat thread summaries by keyword, title, and recency.',
+		'Use this when the user asks about an older conversation, previous decision, past plan, or memory that may not be in the current thread.',
+		'This is conversation memory, not vault evidence.',
+	].join(' '),
+	risk: 'read',
+	schema: {
+		type: 'object',
+		properties: {
+			query: { type: 'string', description: 'Keywords, entities, or topic to search in previous thread summaries.' },
+			limit: { type: 'number', description: 'Maximum number of threads to return.' },
+		},
+		required: ['query'],
+		additionalProperties: false,
+	},
+	async execute(input: SearchThreadsInput, context: ToolContext) {
+		const query = input.query?.trim();
+		if (!query) {
+			throw new Error('search_threads requires query.');
+		}
+		return {
+			query,
+			results: await context.threads.searchThreads(query, input.limit),
 		};
 	},
 };
