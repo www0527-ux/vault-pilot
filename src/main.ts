@@ -202,7 +202,7 @@ export default class VaultPilotPlugin extends Plugin {
 	async answerQuestion(question: string, conversationContext = ''): Promise<AgentAnswer> {
 		const memory = parseMemoryRequest(question);
 		if (memory) {
-			return this.remember(memory, question);
+			return this.handleMemoryRequest(memory, question);
 		}
 
 		if (this.canUseToolCalling()) {
@@ -252,7 +252,7 @@ export default class VaultPilotPlugin extends Plugin {
 	): Promise<AgentAnswer> {
 		const memory = parseMemoryRequest(question);
 		if (memory) {
-			return this.remember(memory, question);
+			return this.handleMemoryRequest(memory, question);
 		}
 
 		if (this.settings.provider === 'local') {
@@ -468,11 +468,21 @@ export default class VaultPilotPlugin extends Plugin {
 		};
 	}
 
-	private async remember(memory: string, question: string): Promise<AgentAnswer> {
-		await this.memoryStore.append(memory);
+	private async handleMemoryRequest(memory: NonNullable<ReturnType<typeof parseMemoryRequest>>, question: string): Promise<AgentAnswer> {
+		if (memory.type === 'forget') {
+			const count = await this.memoryStore.forget(memory.content);
+			new Notice(count > 0 ? `VaultPilot archived ${count} memory entr${count === 1 ? 'y' : 'ies'}.` : 'No matching VaultPilot memory found.');
+			return {
+				answer: count > 0 ? `已归档 ${count} 条匹配记忆。` : '没有找到匹配的记忆。',
+				results: [],
+				mode: 'local',
+				trace: buildMemoryTrace(question),
+			};
+		}
+		await this.memoryStore.append(memory.content);
 		new Notice('VaultPilot memory saved.');
 		return {
-			answer: `已记住：${memory}`,
+			answer: `已记住：${memory.content}`,
 			results: [],
 			mode: 'local',
 			trace: buildMemoryTrace(question),
