@@ -101,8 +101,8 @@ export class VaultPilotView extends ItemView {
 		let liveAnswer = '';
 		let liveProcess = '';
 		const activeToolRows = new Map<string, HTMLElement[]>();
-		const conversationContext = this.buildConversationContext();
 		const threadId = await this.ensureThread(question);
+		const conversationContext = await this.buildConversationContext(threadId);
 		void this.plugin.threadStore.appendEvent(threadId, { type: 'user', content: question });
 
 		const answer = await this.plugin.streamAnswerQuestion(question, conversationContext, (event) => {
@@ -141,6 +141,9 @@ export class VaultPilotView extends ItemView {
 			}
 			if (event.type === 'process') {
 				liveProcess += event.delta;
+				if (event.delta.trim()) {
+					void this.plugin.threadStore.appendEvent(threadId, { type: 'process', content: event.delta.trim() });
+				}
 				this.updateLiveProcess(live.processEl, liveProcess);
 				this.scrollMessagesToBottom();
 				return;
@@ -201,6 +204,7 @@ export class VaultPilotView extends ItemView {
 		});
 		await this.renderAssistantAnswer(loading, answer);
 		void this.plugin.threadStore.appendEvent(threadId, { type: 'assistant', content: answer.answer });
+		void this.plugin.threadStore.updateSummary(threadId);
 		this.rememberConversationTurn(question, answer.answer);
 		this.scrollMessagesToBottom();
 	}
@@ -236,8 +240,9 @@ export class VaultPilotView extends ItemView {
 		return this.threadId;
 	}
 
-	private buildConversationContext(): string {
-		return this.conversationTurns
+	private async buildConversationContext(threadId: string): Promise<string> {
+		const summary = await this.plugin.threadStore.readSummary(threadId).catch(() => '');
+		const slidingWindow = this.conversationTurns
 			.slice(-6)
 			.map((turn, index) => [
 				`Turn ${index + 1}`,
@@ -246,6 +251,13 @@ export class VaultPilotView extends ItemView {
 			].join('\n'))
 			.join('\n\n')
 			.slice(-4000);
+		return [
+			summary.trim() ? `Thread summary:\n${summary.trim()}` : '',
+			slidingWindow.trim() ? `Recent conversation window:\n${slidingWindow.trim()}` : '',
+		]
+			.filter(Boolean)
+			.join('\n\n')
+			.slice(-7000);
 	}
 
 	private rememberConversationTurn(user: string, assistant: string) {
