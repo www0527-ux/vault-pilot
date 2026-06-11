@@ -1,6 +1,7 @@
 /* eslint-disable obsidianmd/ui/sentence-case */
 import { ItemView, MarkdownRenderer, TFile, WorkspaceLeaf } from 'obsidian';
 import { routeConversationContext } from '../memory/context-router';
+import { ThreadSearchResult } from '../memory/thread-store';
 import { IndexStats } from '../rag/index-manager';
 import { AgentAnswer, SearchResult } from '../rag/types';
 import type VaultPilotPlugin from '../main';
@@ -244,6 +245,9 @@ export class VaultPilotView extends ItemView {
 	private async buildConversationContext(threadId: string, question: string): Promise<string> {
 		const route = routeConversationContext(question);
 		const summary = await this.plugin.threadStore.readSummary(threadId).catch(() => '');
+		const pastThreads = route.includePastThreads
+			? await this.plugin.threadStore.searchThreads(question, 4).catch(() => [])
+			: [];
 		const slidingWindow = this.conversationTurns
 			.slice(-6)
 			.map((turn, index) => [
@@ -257,6 +261,7 @@ export class VaultPilotView extends ItemView {
 			`Context route: ${route.route}`,
 			`Context route reason: ${route.reason}`,
 			route.includeSummary && summary.trim() ? `Thread summary:\n${summary.trim()}` : '',
+			pastThreads.length > 0 ? `Candidate past threads:\n${formatPastThreads(pastThreads)}` : '',
 			route.includeSlidingWindow && slidingWindow.trim() ? `Recent conversation window:\n${slidingWindow.trim()}` : '',
 		]
 			.filter(Boolean)
@@ -593,6 +598,18 @@ function buildProcessSummaryText(answer: AgentAnswer): string {
 		return 'Processed with warnings';
 	}
 	return 'Processed';
+}
+
+function formatPastThreads(results: ThreadSearchResult[]): string {
+	return results
+		.map((result, index) => [
+			`Thread ${index + 1}: ${result.title}`,
+			`id: ${result.id}`,
+			`updated: ${result.updatedAt}`,
+			`matches: ${result.matches.join(', ') || 'none'}`,
+			`excerpt: ${result.excerpt}`,
+		].join('\n'))
+		.join('\n\n');
 }
 
 function buildToolLogTitle(toolCall: NonNullable<AgentAnswer['trace']['toolCalls']>[number]): string {

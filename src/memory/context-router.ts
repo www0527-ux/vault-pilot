@@ -5,6 +5,7 @@ export interface ContextRouteDecision {
 	reason: string;
 	includeSummary: boolean;
 	includeSlidingWindow: boolean;
+	includePastThreads: boolean;
 }
 
 const FOLLOW_UP_PATTERNS = [
@@ -13,8 +14,8 @@ const FOLLOW_UP_PATTERNS = [
 ];
 
 const MEMORY_RECALL_PATTERNS = [
-	/之前|以前|上次|早些时候|还记得|我们说过|聊过|历史|回顾/u,
-	/\b(previously|earlier|last time|remember when|we discussed|we talked about|history)\b/iu,
+	/之前|以前|上次|早些时候|还记得|我们说过|聊过|历史|回顾|很早|过去/u,
+	/\b(previously|earlier|last time|remember when|we discussed|we talked about|history|older|past)\b/iu,
 ];
 
 const CORRECTION_PATTERNS = [
@@ -30,6 +31,7 @@ export function routeConversationContext(question: string): ContextRouteDecision
 			reason: 'The user appears to be correcting or revising previous context.',
 			includeSummary: true,
 			includeSlidingWindow: true,
+			includePastThreads: false,
 		};
 	}
 	if (matchesAny(normalized, MEMORY_RECALL_PATTERNS)) {
@@ -38,6 +40,7 @@ export function routeConversationContext(question: string): ContextRouteDecision
 			reason: 'The user is explicitly referring to earlier discussion or memory.',
 			includeSummary: true,
 			includeSlidingWindow: true,
+			includePastThreads: true,
 		};
 	}
 	if (matchesAny(normalized, FOLLOW_UP_PATTERNS) && !looksLikeStandaloneTopic(normalized)) {
@@ -46,6 +49,7 @@ export function routeConversationContext(question: string): ContextRouteDecision
 			reason: 'The question uses follow-up references without a clear standalone topic.',
 			includeSummary: true,
 			includeSlidingWindow: true,
+			includePastThreads: false,
 		};
 	}
 	return {
@@ -53,6 +57,7 @@ export function routeConversationContext(question: string): ContextRouteDecision
 		reason: 'The question appears to introduce a standalone topic.',
 		includeSummary: true,
 		includeSlidingWindow: false,
+		includePastThreads: false,
 	};
 }
 
