@@ -7,6 +7,7 @@
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+		"test": "node scripts/run-memory-tests.mjs",
 		"prepare:hotpotqa": "node scripts/prepare-hotpotqa-dataset.mjs",
 		"eval:retrieval": "node scripts/evaluate-retrieval-results.mjs",
 		"eval:hotpotqa": "node scripts/run-hotpotqa-retrieval-eval.mjs",
