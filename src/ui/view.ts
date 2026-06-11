@@ -1,5 +1,6 @@
 /* eslint-disable obsidianmd/ui/sentence-case */
 import { ItemView, MarkdownRenderer, TFile, WorkspaceLeaf } from 'obsidian';
+import { routeConversationContext } from '../memory/context-router';
 import { IndexStats } from '../rag/index-manager';
 import { AgentAnswer, SearchResult } from '../rag/types';
 import type VaultPilotPlugin from '../main';
@@ -102,7 +103,7 @@ export class VaultPilotView extends ItemView {
 		let liveProcess = '';
 		const activeToolRows = new Map<string, HTMLElement[]>();
 		const threadId = await this.ensureThread(question);
-		const conversationContext = await this.buildConversationContext(threadId);
+		const conversationContext = await this.buildConversationContext(threadId, question);
 		void this.plugin.threadStore.appendEvent(threadId, { type: 'user', content: question });
 
 		const answer = await this.plugin.streamAnswerQuestion(question, conversationContext, (event) => {
@@ -240,7 +241,8 @@ export class VaultPilotView extends ItemView {
 		return this.threadId;
 	}
 
-	private async buildConversationContext(threadId: string): Promise<string> {
+	private async buildConversationContext(threadId: string, question: string): Promise<string> {
+		const route = routeConversationContext(question);
 		const summary = await this.plugin.threadStore.readSummary(threadId).catch(() => '');
 		const slidingWindow = this.conversationTurns
 			.slice(-6)
@@ -252,8 +254,10 @@ export class VaultPilotView extends ItemView {
 			.join('\n\n')
 			.slice(-4000);
 		return [
-			summary.trim() ? `Thread summary:\n${summary.trim()}` : '',
-			slidingWindow.trim() ? `Recent conversation window:\n${slidingWindow.trim()}` : '',
+			`Context route: ${route.route}`,
+			`Context route reason: ${route.reason}`,
+			route.includeSummary && summary.trim() ? `Thread summary:\n${summary.trim()}` : '',
+			route.includeSlidingWindow && slidingWindow.trim() ? `Recent conversation window:\n${slidingWindow.trim()}` : '',
 		]
 			.filter(Boolean)
 			.join('\n\n')
