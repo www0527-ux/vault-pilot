@@ -201,6 +201,8 @@ function buildRollingSummary(metadata: ThreadMetadata, events: Array<ThreadEvent
 	const recentTurns = buildRecentTurns(events).slice(-4);
 	const currentTopic = summarizeText(userEvents.at(-1)?.content ?? metadata.title, 180);
 	const lastAssistant = summarizeText(assistantEvents.at(-1)?.content ?? '', 360);
+	const decisions = extractDecisions(events).slice(-6);
+	const openQuestions = extractOpenQuestions(events).slice(-6);
 	return [
 		`# ${metadata.title}`,
 		'',
@@ -216,6 +218,9 @@ function buildRollingSummary(metadata: ThreadMetadata, events: Array<ThreadEvent
 		'## Recent User Goals',
 		...formatBullets(userEvents.slice(-5).map((event) => summarizeText(event.content, 180))),
 		'',
+		'## Decisions',
+		...formatBullets(decisions),
+		'',
 		'## Recent Assistant State',
 		lastAssistant ? `- ${lastAssistant}` : '- No assistant answer yet.',
 		'',
@@ -229,7 +234,7 @@ function buildRollingSummary(metadata: ThreadMetadata, events: Array<ThreadEvent
 		...recentTurns.flatMap(formatTurn),
 		'',
 		'## Open Questions',
-		'- Not yet summarized.',
+		...formatBullets(openQuestions),
 		'',
 	].join('\n');
 }
@@ -277,6 +282,48 @@ function formatTurn(turn: ConversationSummaryTurn): string[] {
 		`- User: ${summarizeText(turn.user, 220)}`,
 		`- Assistant: ${summarizeText(turn.assistant, 320) || '(no final answer recorded)'}`,
 	];
+}
+
+function extractDecisions(events: Array<ThreadEvent & { time: string }>): string[] {
+	const lines: string[] = [];
+	for (const event of events) {
+		if (event.type !== 'user' && event.type !== 'assistant') {
+			continue;
+		}
+		const content = summarizeText(event.content, 240);
+		if (!content || !looksLikeDecision(content)) {
+			continue;
+		}
+		lines.push(`${event.time}: ${content}`);
+	}
+	return uniqueStrings(lines);
+}
+
+function extractOpenQuestions(events: Array<ThreadEvent & { time: string }>): string[] {
+	const lines: string[] = [];
+	for (const event of events) {
+		if (event.type !== 'user') {
+			continue;
+		}
+		const content = summarizeText(event.content, 220);
+		if (!content || !looksLikeQuestion(content)) {
+			continue;
+		}
+		lines.push(`${event.time}: ${content}`);
+	}
+	return uniqueStrings(lines);
+}
+
+function looksLikeDecision(text: string): boolean {
+	return /决定|确认|方案|执行|去做|可以的|就这样|下一步|commit|implemented|decided|confirmed|plan|ship|do it/iu.test(text);
+}
+
+function looksLikeQuestion(text: string): boolean {
+	return /[?？]$/u.test(text) || /怎么|如何|为什么|是否|能否|有没有|what|how|why|whether|can\b|should\b/iu.test(text);
+}
+
+function uniqueStrings(values: string[]): string[] {
+	return Array.from(new Set(values));
 }
 
 function formatToolResult(event: ThreadEvent & { time: string }): string {
