@@ -33,6 +33,11 @@ interface ForgetProfileInput {
 	query?: string;
 }
 
+interface UpdateProfileInput {
+	query?: string;
+	content?: string;
+}
+
 interface ReadThreadSummaryInput {
 	threadId?: string;
 }
@@ -47,6 +52,7 @@ export function createDefaultTools(): AgentTool<unknown, unknown>[] {
 		readProfileTool,
 		rememberProfileTool,
 		forgetProfileTool,
+		updateProfileTool,
 		readThreadSummaryTool,
 		searchThreadsTool,
 		getCurrentNoteTool,
@@ -114,9 +120,10 @@ const rememberProfileTool: AgentTool<RememberProfileInput, unknown> = {
 		if (!content) {
 			throw new Error('remember_profile requires content.');
 		}
-		await context.memory.append(content);
+		const result = await context.memory.append(content);
 		return {
 			path: context.memory.getPath(),
+			...result,
 			saved: content,
 		};
 	},
@@ -147,6 +154,45 @@ const forgetProfileTool: AgentTool<ForgetProfileInput, unknown> = {
 			path: context.memory.getPath(),
 			query,
 			archived,
+		};
+	},
+};
+
+const updateProfileTool: AgentTool<UpdateProfileInput, unknown> = {
+	name: 'update_profile',
+	description: [
+		'Update an existing VaultPilot profile memory that matches a query.',
+		'Use only when the user explicitly asks to update, correct, replace, or change a saved memory.',
+	].join(' '),
+	risk: 'write',
+	schema: {
+		type: 'object',
+		properties: {
+			query: { type: 'string', description: 'Text that identifies the old memory to update.' },
+			content: { type: 'string', description: 'The replacement memory content.' },
+		},
+		required: ['query', 'content'],
+		additionalProperties: false,
+	},
+	async execute(input: UpdateProfileInput, context: ToolContext) {
+		const query = input.query?.trim();
+		const content = input.content?.trim();
+		if (!query || !content) {
+			throw new Error('update_profile requires query and content.');
+		}
+		const result = await context.memory.update(query, content);
+		if (!result) {
+			return {
+				path: context.memory.getPath(),
+				query,
+				updated: false,
+				message: 'No matching profile memory found.',
+			};
+		}
+		return {
+			path: context.memory.getPath(),
+			query,
+			...result,
 		};
 	},
 };

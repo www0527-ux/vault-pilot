@@ -478,16 +478,17 @@ export default class VaultPilotPlugin extends Plugin {
 			const count = await this.memoryStore.forget(memory.content);
 			new Notice(count > 0 ? `VaultPilot archived ${count} memory entr${count === 1 ? 'y' : 'ies'}.` : 'No matching VaultPilot memory found.');
 			return {
-				answer: count > 0 ? `已归档 ${count} 条匹配记忆。` : '没有找到匹配的记忆。',
+				answer: count > 0 ? `\u5df2\u5f52\u6863 ${count} \u6761\u5339\u914d\u8bb0\u5fc6\u3002` : '\u6ca1\u6709\u627e\u5230\u5339\u914d\u7684\u8bb0\u5fc6\u3002',
 				results: [],
 				mode: 'local',
 				trace: buildMemoryTrace(question),
 			};
 		}
-		await this.memoryStore.append(memory.content);
-		new Notice('VaultPilot memory saved.');
+		const result = await this.memoryStore.append(memory.content);
+		const action = result?.action ?? 'created';
+		new Notice(action === 'updated' ? 'VaultPilot memory updated.' : action === 'unchanged' ? 'VaultPilot memory already exists.' : 'VaultPilot memory saved.');
 		return {
-			answer: `已记住：${memory.content}`,
+			answer: formatMemorySaveAnswer(memory.content, action),
 			results: [],
 			mode: 'local',
 			trace: buildMemoryTrace(question),
@@ -718,6 +719,16 @@ function buildMemoryTrace(question: string): ResponseTrace {
 	};
 }
 
+function formatMemorySaveAnswer(content: string, action: 'created' | 'updated' | 'unchanged'): string {
+	if (action === 'updated') {
+		return `\u5df2\u66f4\u65b0\u8bb0\u5fc6\uff1a${content}`;
+	}
+	if (action === 'unchanged') {
+		return `\u8fd9\u6761\u8bb0\u5fc6\u5df2\u5b58\u5728\uff1a${content}`;
+	}
+	return `\u5df2\u8bb0\u4f4f\uff1a${content}`;
+}
+
 function buildAgentTrace(
 	question: string,
 	results: SearchResult[],
@@ -857,12 +868,21 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 		return 'Read profile memory';
 	}
 	if (result.call.name === 'remember_profile' && isRecord(result.output)) {
-		const saved = typeof result.output.saved === 'string' ? result.output.saved : '';
-		return saved ? `Saved memory: ${saved}` : 'Saved profile memory';
+		const action = typeof result.output.action === 'string' ? result.output.action : 'saved';
+		const saved = typeof result.output.content === 'string' ? result.output.content : typeof result.output.saved === 'string' ? result.output.saved : '';
+		return saved ? `${capitalize(action)} memory: ${saved}` : `${capitalize(action)} profile memory`;
 	}
 	if (result.call.name === 'forget_profile' && isRecord(result.output)) {
 		const archived = typeof result.output.archived === 'number' ? result.output.archived : 0;
 		return `Archived ${archived} memor${archived === 1 ? 'y' : 'ies'}`;
+	}
+	if (result.call.name === 'update_profile' && isRecord(result.output)) {
+		if (result.output.updated === false) {
+			return 'No matching profile memory found';
+		}
+		const action = typeof result.output.action === 'string' ? result.output.action : 'updated';
+		const content = typeof result.output.content === 'string' ? result.output.content : '';
+		return content ? `${capitalize(action)} memory: ${content}` : `${capitalize(action)} profile memory`;
 	}
 	if (result.call.name === 'read_thread_summary' && isRecord(result.output)) {
 		const threadId = typeof result.output.threadId === 'string' ? result.output.threadId : 'current thread';
@@ -877,6 +897,10 @@ function summarizeToolOutput(result: ToolExecutionResult): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
+}
+
+function capitalize(value: string): string {
+	return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
 function cleanAnswerForDisplay(answer: string, reasoning: string): { answer: string; process: string[] } {

@@ -188,7 +188,8 @@ function buildSystemPrompt(memoryContext?: string, conversationContext?: string)
 		'Memory tools are for user-editable preferences, environment facts, project facts, decisions, and conversation recall. They are not vault evidence.',
 		'Use read_profile or read_thread_summary when the user asks to recall saved preferences, current-thread conversation, or what was decided before.',
 		'Use search_threads when the user asks about older conversations, distant memories, previous plans, or decisions that may not be in the current thread.',
-		'Use remember_profile, forget_profile, or memory-changing tools only when the user explicitly asks to remember, save, update, forget, remove, delete, or correct memory.',
+		'Use remember_profile, update_profile, forget_profile, or memory-changing tools only when the user explicitly asks to remember, save, update, forget, remove, delete, or correct memory.',
+		'Use update_profile instead of remember_profile when the user says an existing saved memory should be changed or corrected.',
 		'Never save ordinary chat content to profile memory without explicit user intent.',
 		'Tool paths must be vault-relative paths. If the user gives an absolute filesystem path, convert it to the path relative to the vault before calling tools.',
 		'When calling search_notes, provide retrieval-ready query parameters yourself.',
@@ -293,6 +294,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === 'object' && value !== null;
 }
 
+function capitalize(value: string): string {
+	return value.charAt(0).toUpperCase() + value.slice(1);
+}
+
 function summarizeToolInput(name: string, input: unknown): string {
 	if (!isRecord(input)) {
 		return '';
@@ -328,6 +333,11 @@ function summarizeToolInput(name: string, input: unknown): string {
 	}
 	if (name === 'forget_profile') {
 		return typeof input.query === 'string' ? input.query.trim().slice(0, 160) : '';
+	}
+	if (name === 'update_profile') {
+		const query = typeof input.query === 'string' ? input.query.trim().slice(0, 80) : '';
+		const content = typeof input.content === 'string' ? input.content.trim().slice(0, 120) : '';
+		return [query, content].filter(Boolean).join(' -> ');
 	}
 	if (name === 'read_thread_summary') {
 		return typeof input.threadId === 'string' && input.threadId.trim() ? input.threadId.trim() : 'current thread';
@@ -383,6 +393,14 @@ function summarizeToolResult(result: ToolExecutionResult): string {
 	if (result.call.name === 'forget_profile' && isRecord(result.output)) {
 		const archived = typeof result.output.archived === 'number' ? result.output.archived : 0;
 		return `Archived ${archived} memor${archived === 1 ? 'y' : 'ies'}`;
+	}
+	if (result.call.name === 'update_profile' && isRecord(result.output)) {
+		if (result.output.updated === false) {
+			return 'No matching profile memory found';
+		}
+		const action = typeof result.output.action === 'string' ? result.output.action : 'updated';
+		const content = typeof result.output.content === 'string' ? result.output.content : '';
+		return content ? `${capitalize(action)} memory: ${content}` : `${capitalize(action)} profile memory`;
 	}
 	if (result.call.name === 'read_thread_summary' && isRecord(result.output)) {
 		const threadId = typeof result.output.threadId === 'string' ? result.output.threadId : 'current thread';

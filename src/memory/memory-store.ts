@@ -16,11 +16,26 @@ const DEFAULT_MEMORY = `# VaultPilot Memory
 ## Archived
 `;
 
+const MEMORY_ENTRY_PATTERN = /- id: ([^\n]+)\n[ ]{2}status: (active|archived)\n[ ]{2}scope: ([^\n]+)\n[ ]{2}updated: ([^\n]+)(?:\n[ ]{2}archived: ([^\n]+))?\n[ ]{2}content: ([^\n]+)/gu;
+
 type MemoryScope = 'preference' | 'environment' | 'project' | 'decision' | 'vaultpilot-ui';
 
 export type MemoryRequest =
 	| { type: 'remember'; content: string }
 	| { type: 'forget'; content: string };
+
+export interface MemorySaveResult {
+	action: 'created' | 'updated' | 'unchanged';
+	id: string;
+	scope: MemoryScope;
+	content: string;
+	previousContent?: string;
+}
+
+interface ParsedMemoryEntry extends MemoryEntry {
+	archived?: string;
+	raw: string;
+}
 
 export class MemoryStore {
 	constructor(private vault: Vault) {}
@@ -39,21 +54,82 @@ export class MemoryStore {
 		return normalized;
 	}
 
-	async append(content: string): Promise<void> {
+	async append(content: string): Promise<MemorySaveResult | null> {
 		const cleaned = content.trim();
 		if (!cleaned) {
-			return;
+			return null;
 		}
 		const current = await this.read();
 		const scope = inferMemoryScope(cleaned);
-		const entry = formatMemoryEntry({
+		const existing = findReusableMemory(current, cleaned, scope);
+		if (existing && normalizeForCompare(existing.content) === normalizeForCompare(cleaned)) {
+			return {
+				action: 'unchanged',
+				id: existing.id,
+				scope: existing.scope,
+				content: existing.content,
+			};
+		}
+		if (existing) {
+			const updated: MemoryEntry = {
+				id: existing.id,
+				status: 'active',
+				scope,
+				updated: formatDate(new Date()),
+				content: cleaned,
+			};
+			await this.vault.adapter.write(MEMORY_PATH, replaceMemoryEntry(current, existing, updated));
+			return {
+				action: 'updated',
+				id: existing.id,
+				scope,
+				content: cleaned,
+				previousContent: existing.content,
+			};
+		}
+		const entry: MemoryEntry = {
 			id: createMemoryId(),
 			status: 'active',
 			scope,
 			updated: formatDate(new Date()),
 			content: cleaned,
-		});
-		await this.vault.adapter.write(MEMORY_PATH, insertUnderHeading(current, headingForScope(scope), entry));
+		};
+		await this.vault.adapter.write(MEMORY_PATH, insertUnderHeading(current, headingForScope(scope), formatMemoryEntry(entry)));
+		return {
+			action: 'created',
+			id: entry.id,
+			scope,
+			content: cleaned,
+		};
+	}
+
+	async update(query: string, content: string): Promise<MemorySaveResult | null> {
+		const cleanedQuery = query.trim();
+		const cleanedContent = content.trim();
+		if (!cleanedQuery || !cleanedContent) {
+			return null;
+		}
+		const current = await this.read();
+		const existing = findBestMemoryMatch(current, cleanedQuery);
+		if (!existing) {
+			return null;
+		}
+		const scope = inferMemoryScope(cleanedContent);
+		const updated: MemoryEntry = {
+			id: existing.id,
+			status: 'active',
+			scope,
+			updated: formatDate(new Date()),
+			content: cleanedContent,
+		};
+		await this.vault.adapter.write(MEMORY_PATH, replaceMemoryEntry(current, existing, updated));
+		return {
+			action: 'updated',
+			id: existing.id,
+			scope,
+			content: cleanedContent,
+			previousContent: existing.content,
+		};
 	}
 
 	async forget(query: string): Promise<number> {
@@ -64,20 +140,20 @@ export class MemoryStore {
 		const current = await this.read();
 		let count = 0;
 		const updated = current.replace(
-			/- id: ([^\n]+)\n[ ]{2}status: active\n[ ]{2}scope: ([^\n]+)\n[ ]{2}updated: ([^\n]+)\n[ ]{2}content: ([^\n]+)/gu,
-			(match, id: string, scope: string, updatedAt: string, content: string) => {
-				if (!content.toLowerCase().includes(cleaned)) {
+			MEMORY_ENTRY_PATTERN,
+			(match, id: string, status: string, scope: string, updatedAt: string, _archived: string | undefined, content: string) => {
+				if (status !== 'active' || !content.toLowerCase().includes(cleaned)) {
 					return match;
 				}
 				count += 1;
-				return [
-					`- id: ${id}`,
-					'  status: archived',
-					`  scope: ${scope}`,
-					`  updated: ${updatedAt}`,
-					`  archived: ${formatDate(new Date())}`,
-					`  content: ${content}`,
-				].join('\n');
+				return formatMemoryEntry({
+					id,
+					status: 'archived',
+					scope: normalizeScope(scope),
+					updated: updatedAt,
+					archived: formatDate(new Date()),
+					content,
+				}).trimEnd();
 			},
 		);
 		if (count > 0) {
@@ -123,6 +199,7 @@ interface MemoryEntry {
 	status: 'active' | 'archived';
 	scope: MemoryScope;
 	updated: string;
+	archived?: string;
 	content: string;
 }
 
@@ -132,9 +209,10 @@ function formatMemoryEntry(entry: MemoryEntry): string {
 		`  status: ${entry.status}`,
 		`  scope: ${entry.scope}`,
 		`  updated: ${entry.updated}`,
+		entry.archived ? `  archived: ${entry.archived}` : '',
 		`  content: ${entry.content}`,
 		'',
-	].join('\n');
+	].filter((line) => line !== '').join('\n');
 }
 
 function normalizeMemoryDocument(content: string): string {
@@ -155,6 +233,52 @@ function insertUnderHeading(document: string, heading: string, entry: string): s
 	}
 	const insertAt = index + heading.length;
 	return `${document.slice(0, insertAt)}\n${entry}${document.slice(insertAt).replace(/^\s*/u, '\n')}`;
+}
+
+function replaceMemoryEntry(document: string, existing: ParsedMemoryEntry, updated: MemoryEntry): string {
+	const withoutExisting = document.replace(existing.raw, '').replace(/\n{3,}/gu, '\n\n');
+	return insertUnderHeading(withoutExisting, headingForScope(updated.scope), formatMemoryEntry(updated));
+}
+
+function parseMemoryEntries(document: string): ParsedMemoryEntry[] {
+	return Array.from(document.matchAll(MEMORY_ENTRY_PATTERN)).map((match) => ({
+		id: match[1] ?? '',
+		status: normalizeStatus(match[2]),
+		scope: normalizeScope(match[3] ?? ''),
+		updated: match[4] ?? '',
+		archived: match[5],
+		content: match[6] ?? '',
+		raw: match[0] ?? '',
+	}));
+}
+
+function findReusableMemory(document: string, content: string, scope: MemoryScope): ParsedMemoryEntry | null {
+	const activeEntries = parseMemoryEntries(document).filter((entry) => entry.status === 'active');
+	const sameScope = activeEntries.filter((entry) => entry.scope === scope);
+	const exact = sameScope.find((entry) => normalizeForCompare(entry.content) === normalizeForCompare(content));
+	if (exact) {
+		return exact;
+	}
+	const scored = sameScope
+		.map((entry) => ({ entry, score: similarityScore(entry.content, content) }))
+		.sort((left, right) => right.score - left.score);
+	return scored[0] && scored[0].score >= 0.72 ? scored[0].entry : null;
+}
+
+function findBestMemoryMatch(document: string, query: string): ParsedMemoryEntry | null {
+	const normalizedQuery = normalizeForCompare(query);
+	const activeEntries = parseMemoryEntries(document).filter((entry) => entry.status === 'active');
+	const direct = activeEntries.find((entry) => {
+		const content = normalizeForCompare(entry.content);
+		return content.includes(normalizedQuery) || normalizedQuery.includes(content);
+	});
+	if (direct) {
+		return direct;
+	}
+	const scored = activeEntries
+		.map((entry) => ({ entry, score: similarityScore(entry.content, query) }))
+		.sort((left, right) => right.score - left.score);
+	return scored[0] && scored[0].score >= 0.45 ? scored[0].entry : null;
 }
 
 function headingForScope(scope: MemoryScope): string {
@@ -182,6 +306,49 @@ function inferMemoryScope(content: string): MemoryScope {
 	}
 	if (/\u9879\u76ee|\u63d2\u4ef6|vaultpilot|obsidian/iu.test(content)) {
 		return 'project';
+	}
+	return 'preference';
+}
+
+function similarityScore(left: string, right: string): number {
+	const leftTokens = new Set(tokenizeForCompare(left));
+	const rightTokens = new Set(tokenizeForCompare(right));
+	if (leftTokens.size === 0 || rightTokens.size === 0) {
+		return 0;
+	}
+	const intersection = Array.from(leftTokens).filter((token) => rightTokens.has(token)).length;
+	const union = new Set([...leftTokens, ...rightTokens]).size;
+	return intersection / union;
+}
+
+function tokenizeForCompare(value: string): string[] {
+	const normalized = normalizeForCompare(value);
+	const ascii = normalized.match(/[a-z0-9_\-.]+/gu) ?? [];
+	const cjk = normalized.match(/[\p{Script=Han}]{2,}/gu) ?? [];
+	const cjkPairs = cjk.flatMap((token) => {
+		if (token.length <= 3) {
+			return [token];
+		}
+		const pairs: string[] = [];
+		for (let index = 0; index < token.length - 1; index += 1) {
+			pairs.push(token.slice(index, index + 2));
+		}
+		return [token, ...pairs];
+	});
+	return Array.from(new Set([...ascii, ...cjkPairs]));
+}
+
+function normalizeForCompare(value: string): string {
+	return value.toLowerCase().replace(/\s+/gu, ' ').trim();
+}
+
+function normalizeStatus(value: string | undefined): MemoryEntry['status'] {
+	return value === 'archived' ? 'archived' : 'active';
+}
+
+function normalizeScope(value: string): MemoryScope {
+	if (value === 'environment' || value === 'project' || value === 'decision' || value === 'vaultpilot-ui') {
+		return value;
 	}
 	return 'preference';
 }

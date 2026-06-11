@@ -640,6 +640,9 @@ function buildToolLogTitle(toolCall: NonNullable<AgentAnswer['trace']['toolCalls
 	if (toolCall.name === 'forget_profile') {
 		return toolCall.ok ? 'Archived memory' : 'Could not archive memory';
 	}
+	if (toolCall.name === 'update_profile') {
+		return toolCall.ok ? 'Updated memory' : 'Could not update memory';
+	}
 	if (toolCall.name === 'read_thread_summary') {
 		return toolCall.ok ? 'Read thread summary' : 'Could not read thread summary';
 	}
@@ -719,6 +722,9 @@ function buildToolActivityTitle(name: string, inputSummary: string): string {
 	if (name === 'forget_profile') {
 		return 'Archiving memory';
 	}
+	if (name === 'update_profile') {
+		return 'Updating memory';
+	}
 	if (name === 'read_thread_summary') {
 		return 'Reading thread summary';
 	}
@@ -769,6 +775,9 @@ function buildToolResultTitle(name: string, ok: boolean): string {
 	}
 	if (name === 'forget_profile') {
 		return ok ? 'Finished archiving memory' : 'Could not archive memory';
+	}
+	if (name === 'update_profile') {
+		return ok ? 'Finished updating memory' : 'Could not update memory';
 	}
 	if (name === 'read_thread_summary') {
 		return ok ? 'Finished reading thread summary' : 'Could not read thread summary';
