@@ -41,6 +41,11 @@ export class VaultPilotView extends ItemView {
 		return this.threadId;
 	}
 
+	startNewThread(): void {
+		this.threadId = null;
+		this.conversationTurns = [];
+	}
+
 	getIcon() {
 		return 'bot';
 	}

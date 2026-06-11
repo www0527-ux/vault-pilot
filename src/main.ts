@@ -153,6 +153,14 @@ export default class VaultPilotPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'start-new-thread',
+			name: 'Start new thread',
+			callback: async () => {
+				await this.startNewThread();
+			},
+		});
+
+		this.addCommand({
 			id: 'start-ollama',
 			name: 'Start Ollama',
 			callback: async () => {
@@ -533,6 +541,12 @@ export default class VaultPilotPlugin extends Plugin {
 			return;
 		}
 		new Notice('Current VaultPilot thread summary was not found.');
+	}
+
+	private async startNewThread(): Promise<void> {
+		await this.activateView();
+		this.getVaultPilotView()?.startNewThread();
+		new Notice('VaultPilot will start a new thread on the next question.');
 	}
 
 	private async startOllama(): Promise<void> {

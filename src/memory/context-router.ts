@@ -55,7 +55,7 @@ export function routeConversationContext(question: string): ContextRouteDecision
 	return {
 		route: 'new_topic',
 		reason: 'The question appears to introduce a standalone topic.',
-		includeSummary: true,
+		includeSummary: false,
 		includeSlidingWindow: false,
 		includePastThreads: false,
 	};
