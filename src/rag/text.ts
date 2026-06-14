@@ -2,6 +2,8 @@ export function tokenize(input: string): string[] {
 	const tokens = new Set<string>();
 	const segments = input
 		.toLowerCase()
+		.replace(/([a-z0-9_-])([\u3400-\u9fff])/gu, '$1 $2')
+		.replace(/([\u3400-\u9fff])([a-z0-9_-])/gu, '$1 $2')
 		.replace(/[^\p{L}\p{N}\s_-]/gu, ' ')
 		.split(/\s+/)
 		.map((token) => token.trim())

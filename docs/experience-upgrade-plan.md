@@ -14,6 +14,10 @@ VaultPilot is an Obsidian knowledge assistant with:
 - `_rag_eval/` excluded from indexing to avoid experiment notes invalidating the cache.
 - HotpotQA retrieval evaluation scripts for BM25, embedding, weighted hybrid, and RRF.
 
+Related learning notes:
+
+- `docs/agent-building-learning-log.md` records RAG and agent-building failure modes, mature solution patterns, and regression-test ideas.
+
 The latest HotpotQA dev mini retrieval-only evaluation used:
 
 - 200 queries.
@@ -66,7 +70,7 @@ The panel should include:
 
 - Original user question.
 - Rewritten retrieval query.
-- Retrieval mode, for example `Hybrid retrieval · BM25 0.3 / Embedding 0.7`.
+- Retrieval mode, for example `Hybrid retrieval - BM25 0.3 / Embedding 0.7`.
 - Number of sources found.
 - Source titles and snippets.
 - Retrieval confidence summary.
@@ -145,13 +149,13 @@ The answer header should always distinguish vault-grounded answers from model-pr
 When reliable sources exist:
 
 ```text
-Based on your vault · referenced 3 sources
+Based on your vault - referenced 3 sources
 ```
 
 When no reliable sources exist:
 
 ```text
-No reliable vault evidence found · answer uses model knowledge
+No reliable vault evidence found - answer uses model knowledge
 ```
 
 Do not say:
@@ -178,11 +182,11 @@ Suggested UI:
 Sources
 
 1. 06-Pigeonhole Principle
-   Basic form · lines 7-12
+   Basic form - lines 7-12
    If n + 1 objects are placed into n boxes...
 
 2. 05-Counting Principles
-   Classification idea · lines 14-20
+   Classification idea - lines 14-20
    ...
 ```
 

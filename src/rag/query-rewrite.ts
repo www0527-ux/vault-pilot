@@ -39,9 +39,9 @@ export function normalizeRemoteRewrite(
 		? candidate.queries.filter((query): query is string => typeof query === 'string')
 		: [];
 	const rewrittenQueries = normalizeQueries([
+		question,
 		candidate.rewrittenQuery,
 		...queryCandidates,
-		question,
 	]);
 
 	if (rewrittenQueries.length === 0) {
