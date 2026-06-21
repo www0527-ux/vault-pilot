@@ -33,8 +33,8 @@ export interface OpenAICompatibleToolCall {
 }
 
 export interface ToolModelResponse {
-	answer: string;
-	reasoning: string;
+	answer: string;// 模型返回的回答或工具调用前的过程说明
+	reasoning: string;// 模型供应商返回的推理过程（若支持）
 	toolCalls: ToolCall[];
 	rawToolCalls: OpenAICompatibleToolCall[];
 }

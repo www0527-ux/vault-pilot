@@ -6,11 +6,17 @@ import { ToolExecutor } from './tool-executor';
 import { ToolRegistry } from './tool-registry';
 
 const TOOL_STEP_LIMIT_WARNING = 'Tool-call step limit reached';
+const DEFAULT_MAX_STEPS = 6;
+
+interface FinalAnswerStreamResult {
+	answer: string;
+	warning?: string;
+}
 
 export class AgentRunner {
 	constructor(
 		private chatOptions: ChatClientOptions,
-		private registry: ToolRegistry,
+		private registry: ToolRegistry,//工具注册表
 		private executor: ToolExecutor,
 		private context: ToolContext,
 	) {}
@@ -23,10 +29,12 @@ export class AgentRunner {
 		];
 		const toolResults: ToolExecutionResult[] = [];
 		const process: string[] = [];
-		const maxSteps = request.maxSteps;
+		const maxSteps = request.maxSteps ?? DEFAULT_MAX_STEPS;
+		//先生成一个初始的进度说明，告诉用户正在进行什么操作
 		await this.emitInitialProcess(request, process);
 
-		for (let step = 0; maxSteps === undefined || step < maxSteps; step += 1) {
+		for (let step = 0; step < maxSteps; step += 1) {
+			//设置了步数限制
 			const stepStartedAt = Date.now();
 			const stepNumber = step + 1;
 			const stepLabel = step === 0 ? 'Choosing tools' : 'Reviewing tool results';
@@ -35,6 +43,7 @@ export class AgentRunner {
 
 			let response;
 			try {
+				//这里listDefinitions()包含了所有工具的定义，包括工具名称、输入输出格式等信息，LLM会根据这些定义来决定调用哪些工具以及如何调用
 				response = await completeChatWithTools(this.chatOptions, messages, this.registry.listDefinitions());
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
@@ -47,6 +56,7 @@ export class AgentRunner {
 				});
 				throw error;
 			}
+			//toolcalls为工具列表，是格式化后的数组
 			if (response.toolCalls.length === 0) {
 				request.onEvent?.({
 					type: 'step_finish',
@@ -55,14 +65,15 @@ export class AgentRunner {
 					durationMs: Date.now() - stepStartedAt,
 				});
 				this.emitStatus(request, 'Writing answer');
-				const streamed = await this.streamFinalAnswer(request, messages);
+				// finalResponse 汇总最终答案和可选警告；答案增量已通过 onEvent 实时推送给 UI。
+				const finalResponse = await this.streamFinalAnswer(request, messages);
 				return {
-					answer: streamed || response.answer || 'I could not produce an answer from the available tool results.',
+					answer: finalResponse.answer || response.answer || 'I could not produce an answer from the available tool results.',
 					results: dedupeResults(toolResults.flatMap((result) => result.results ?? [])),
 					toolResults,
 					process,
 					durationMs: Date.now() - startedAt,
-					warnings: [],
+					warnings: finalResponse.warning ? [finalResponse.warning] : [],
 				};
 			}
 
@@ -75,7 +86,7 @@ export class AgentRunner {
 			messages.push({
 				role: 'assistant',
 				content: response.answer || null,
-				tool_calls: response.rawToolCalls,
+				tool_calls: response.rawToolCalls,//这里用的是原始的工具调用api
 			});
 
 			for (let index = 0; index < response.toolCalls.length; index += 1) {
@@ -88,9 +99,11 @@ export class AgentRunner {
 				request.onEvent?.({
 					type: 'tool_start',
 					name: call.name,
+					//包含了tool调用的一些细节摘要
 					inputSummary: summarizeToolInput(call.name, call.input),
 				});
 				const result = await this.executor.execute(call, this.context);
+
 				toolResults.push(result);
 				request.onEvent?.({
 					type: 'tool_result',
@@ -117,7 +130,7 @@ export class AgentRunner {
 
 		request.onEvent?.({
 			type: 'step_error',
-			step: maxSteps ?? toolResults.length,
+			step: maxSteps,
 			label: 'Stopped after tool limit',
 			error: TOOL_STEP_LIMIT_WARNING,
 			durationMs: Date.now() - startedAt,
@@ -154,7 +167,10 @@ export class AgentRunner {
 		}
 	}
 
-	private async streamFinalAnswer(request: AgentRunRequest, messages: ChatMessage[]): Promise<string> {
+	private async streamFinalAnswer(
+		request: AgentRunRequest,
+		messages: ChatMessage[],
+	): Promise<FinalAnswerStreamResult> {
 		try {
 			const response = await completeChatStream(
 				this.chatOptions,
@@ -171,10 +187,14 @@ export class AgentRunner {
 					request.onEvent?.({ type: 'process', delta: event.delta });
 				},
 			);
-			return response.answer.trim();
+			return { answer: response.answer.trim() };
 		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
 			console.debug('VaultPilot final answer streaming failed.', error);
-			return '';
+			return {
+				answer: '',
+				warning: `Final answer streaming failed: ${message}`,
+			};
 		}
 	}
 }
@@ -297,7 +317,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function capitalize(value: string): string {
 	return value.charAt(0).toUpperCase() + value.slice(1);
 }
-
+//为UI生成各种摘要
 function summarizeToolInput(name: string, input: unknown): string {
 	if (!isRecord(input)) {
 		return '';

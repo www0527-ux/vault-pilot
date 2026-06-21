@@ -288,6 +288,7 @@ export default class VaultPilotPlugin extends Plugin {
 			return this.missingApiKeyAnswer(question, activeFile, results, trace);
 		}
 
+		let toolCallingWarning: string | undefined;
 		if (this.canUseToolCalling()) {
 			try {
 				onEvent({ type: 'status', label: 'Choosing tools' });
@@ -295,6 +296,8 @@ export default class VaultPilotPlugin extends Plugin {
 				return answer;
 			} catch (error) {
 				console.error(error);
+				const message = error instanceof Error ? error.message : String(error);
+				toolCallingWarning = `Tool calling failed; used fixed RAG fallback: ${message}`;
 				new Notice('VaultPilot tool calling failed. Falling back to fixed RAG.');
 				onEvent({ type: 'status', label: 'Searching notes' });
 			}
@@ -326,7 +329,12 @@ export default class VaultPilotPlugin extends Plugin {
 			);
 			gate.flush();
 			const cleaned = cleanAnswerForDisplay(remoteAnswer.answer, remoteAnswer.reasoning);
-			return { answer: cleaned.answer, results, mode: 'remote', trace: addModelProcess(trace, cleaned.process) };
+			return {
+				answer: cleaned.answer,
+				results,
+				mode: 'remote',
+				trace: addOptionalTraceWarning(addModelProcess(trace, cleaned.process), toolCallingWarning),
+			};
 		} catch (error) {
 			console.error(error);
 			const message = error instanceof Error ? error.message : String(error);
@@ -347,7 +355,10 @@ export default class VaultPilotPlugin extends Plugin {
 					answer: cleaned.answer,
 					results,
 					mode: 'remote',
-					trace: addModelProcess(addTraceWarning(trace, message), cleaned.process),
+					trace: addOptionalTraceWarning(
+						addModelProcess(addTraceWarning(trace, message), cleaned.process),
+						toolCallingWarning,
+					),
 					warning: message,
 				};
 			} catch (fallbackError) {
@@ -361,7 +372,10 @@ export default class VaultPilotPlugin extends Plugin {
 					].join('\n\n'),
 					results,
 					mode: 'local',
-					trace: addTraceWarning(addTraceWarning(trace, message), fallbackMessage),
+					trace: addOptionalTraceWarning(
+						addTraceWarning(addTraceWarning(trace, message), fallbackMessage),
+						toolCallingWarning,
+					),
 					warning: fallbackMessage,
 				};
 			}
@@ -830,6 +844,10 @@ function addTraceWarning(trace: ResponseTrace, warning: string): ResponseTrace {
 		...trace,
 		warnings: Array.from(new Set([...trace.warnings, warning])),
 	};
+}
+
+function addOptionalTraceWarning(trace: ResponseTrace, warning?: string): ResponseTrace {
+	return warning ? addTraceWarning(trace, warning) : trace;
 }
 
 function addModelProcess(trace: ResponseTrace, process: string[]): ResponseTrace {
